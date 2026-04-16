@@ -1,0 +1,351 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Hooli Events - Data (Kinesis, S3 Tables, ECR, IAM)
+
+Resources:
+  RawStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: hooli-raw
+      ShardCount: 3
+      StreamModeDetails:
+        StreamMode: PROVISIONED
+
+  EnrichedStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: hooli-enriched
+      ShardCount: 6
+      StreamModeDetails:
+        StreamMode: PROVISIONED
+
+  BadStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: hooli-bad
+      ShardCount: 1
+      StreamModeDetails:
+        StreamMode: PROVISIONED
+
+  TableBucket:
+    Type: AWS::S3Tables::TableBucket
+    Properties:
+      TableBucketName: !Sub "hooli-events-iceberg-${AWS::AccountId}"
+
+  AnalyticsNamespace:
+    Type: AWS::S3Tables::Namespace
+    Properties:
+      TableBucketARN: !GetAtt TableBucket.TableBucketARN
+      Namespace: analytics
+
+  CollectorRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: hooli-events/collector
+      ImageScanningConfiguration:
+        ScanOnPush: false
+
+  EnrichRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: hooli-events/enrich
+      ImageScanningConfiguration:
+        ScanOnPush: false
+
+  LakeLoaderRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: hooli-events/lake-loader
+      ImageScanningConfiguration:
+        ScanOnPush: false
+
+  EventGeneratorRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: hooli-events/event-generator
+      ImageScanningConfiguration:
+        ScanOnPush: false
+
+  EcsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: hooli-events-ecs-execution
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  CollectorTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: hooli-events-collector
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: kinesis-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                  - kinesis:PutRecords
+                  - kinesis:DescribeStream
+                  - kinesis:DescribeStreamSummary
+                Resource:
+                  - !GetAtt RawStream.Arn
+                  - !GetAtt BadStream.Arn
+
+  EnrichTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: hooli-events-enrich
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: kinesis-readwrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                  - kinesis:DescribeStream
+                  - kinesis:DescribeStreamSummary
+                  - kinesis:ListShards
+                  - kinesis:SubscribeToShard
+                Resource:
+                  - !GetAtt RawStream.Arn
+              - Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                  - kinesis:PutRecords
+                  - kinesis:DescribeStream
+                  - kinesis:DescribeStreamSummary
+                Resource:
+                  - !GetAtt EnrichedStream.Arn
+                  - !GetAtt BadStream.Arn
+              - Effect: Allow
+                Action:
+                  - kinesis:ListStreams
+                Resource: "*"
+        - PolicyName: dynamodb-kcl
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub "arn:aws:dynamodb:us-east-2:${AWS::AccountId}:table/hooli-enrich"
+        - PolicyName: cloudwatch-kcl
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+
+  LakeLoaderTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: hooli-events-lake-loader
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: kinesis-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                  - kinesis:DescribeStream
+                  - kinesis:DescribeStreamSummary
+                  - kinesis:ListShards
+                  - kinesis:SubscribeToShard
+                Resource:
+                  - !GetAtt EnrichedStream.Arn
+              - Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                  - kinesis:PutRecords
+                  - kinesis:DescribeStream
+                  - kinesis:DescribeStreamSummary
+                Resource:
+                  - !GetAtt BadStream.Arn
+              - Effect: Allow
+                Action:
+                  - kinesis:ListStreams
+                Resource: "*"
+        - PolicyName: dynamodb-kcl
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub "arn:aws:dynamodb:us-east-2:${AWS::AccountId}:table/hooli-lake-loader"
+        - PolicyName: s3tables-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3tables:*
+                Resource:
+                  - !GetAtt TableBucket.TableBucketARN
+                  - !Sub "${TableBucket.TableBucketARN}/*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                  - s3:AbortMultipartUpload
+                  - s3:ListMultipartUploadParts
+                Resource: "*"
+        - PolicyName: glue-rest-catalog
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:GetCatalog
+                  - glue:GetDatabase
+                  - glue:GetDatabases
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:CreateTable
+                  - glue:UpdateTable
+                Resource:
+                  - !Sub "arn:aws:glue:us-east-2:${AWS::AccountId}:catalog"
+                  - !Sub "arn:aws:glue:us-east-2:${AWS::AccountId}:catalog/hooli-s3tables"
+                  - !Sub "arn:aws:glue:us-east-2:${AWS::AccountId}:database/hooli-s3tables/analytics"
+                  - !Sub "arn:aws:glue:us-east-2:${AWS::AccountId}:table/hooli-s3tables/analytics/*"
+                  - !Sub "arn:aws:glue:us-east-2:${AWS::AccountId}:database/analytics_glue"
+                  - !Sub "arn:aws:glue:us-east-2:${AWS::AccountId}:table/analytics_glue/*"
+        - PolicyName: lakeformation-data-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lakeformation:GetDataAccess
+                Resource: "*"
+        - PolicyName: cloudwatch-kcl
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+
+  EventGeneratorTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: hooli-events-event-generator
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: kinesis-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                  - kinesis:PutRecords
+                  - kinesis:DescribeStream
+                  - kinesis:DescribeStreamSummary
+                Resource:
+                  - !GetAtt EnrichedStream.Arn
+              - Effect: Allow
+                Action:
+                  - kinesis:ListStreams
+                Resource: "*"
+
+Outputs:
+  CollectorRepoUri:
+    Value: !GetAtt CollectorRepo.RepositoryUri
+    Export:
+      Name: hooli-events-CollectorRepoUri
+  EnrichRepoUri:
+    Value: !GetAtt EnrichRepo.RepositoryUri
+    Export:
+      Name: hooli-events-EnrichRepoUri
+  LakeLoaderRepoUri:
+    Value: !GetAtt LakeLoaderRepo.RepositoryUri
+    Export:
+      Name: hooli-events-LakeLoaderRepoUri
+  EventGeneratorRepoUri:
+    Value: !GetAtt EventGeneratorRepo.RepositoryUri
+    Export:
+      Name: hooli-events-EventGeneratorRepoUri
+  TableBucketArn:
+    Value: !GetAtt TableBucket.TableBucketARN
+    Export:
+      Name: hooli-events-TableBucketArn
+  EcsExecutionRoleArn:
+    Value: !GetAtt EcsExecutionRole.Arn
+    Export:
+      Name: hooli-events-EcsExecutionRoleArn
+  CollectorTaskRoleArn:
+    Value: !GetAtt CollectorTaskRole.Arn
+    Export:
+      Name: hooli-events-CollectorTaskRoleArn
+  EnrichTaskRoleArn:
+    Value: !GetAtt EnrichTaskRole.Arn
+    Export:
+      Name: hooli-events-EnrichTaskRoleArn
+  LakeLoaderTaskRoleArn:
+    Value: !GetAtt LakeLoaderTaskRole.Arn
+    Export:
+      Name: hooli-events-LakeLoaderTaskRoleArn
+  EventGeneratorTaskRoleArn:
+    Value: !GetAtt EventGeneratorTaskRole.Arn
+    Export:
+      Name: hooli-events-EventGeneratorTaskRoleArn

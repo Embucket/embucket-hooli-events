@@ -1,0 +1,31 @@
+{
+  "license": {
+    "accept": true
+  }
+
+  "input": {
+    "streamName": "hooli-raw"
+    "appName": "hooli-enrich"
+    "initialPosition": {
+      "type": "TRIM_HORIZON"
+    }
+    "retrievalMode": {
+      "type": "Polling"
+      "maxRecords": 750
+    }
+  }
+
+  "output": {
+    "good": {
+      "streamName": "hooli-enriched"
+      "recordLimit": 500
+      "byteLimit": 5242880
+    }
+
+    "bad": {
+      "streamName": "hooli-bad"
+      "recordLimit": 500
+      "byteLimit": 5242880
+    }
+  }
+}

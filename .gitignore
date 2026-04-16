@@ -1,0 +1,8 @@
+__pycache__/
+
+# Internal / local state — not shipped
+.claude/
+docs/superpowers/
+metastore_db/
+*.log
+scripts/emr-copy-to-s3tables.py

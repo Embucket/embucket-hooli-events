@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browse Events - Hooli Events</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="logo">Hooli Events</a>
+    <a href="events.html">Browse Events</a>
+    <a href="cart.html">Cart (0)</a>
+    <a href="#" onclick="trackLogin('email'); alert('Logged in!'); return false;">Log In</a>
+  </nav>
+
+  <div class="container">
+    <h2>All Events</h2>
+
+    <div class="search-bar">
+      <input type="text" id="search" placeholder="Search events...">
+      <select id="category" onchange="trackFilter(this.value)">
+        <option value="">All Categories</option>
+        <option value="music">Music</option>
+        <option value="tech">Technology</option>
+        <option value="food">Food &amp; Drink</option>
+        <option value="sports">Sports</option>
+      </select>
+      <button class="btn" onclick="trackSearch(document.getElementById('search').value)">Search</button>
+    </div>
+
+    <div class="event-grid">
+      <a href="event-detail.html?id=1" class="event-card" style="text-decoration:none;color:inherit">
+        <div class="card-img">&#127926;</div>
+        <div class="card-body">
+          <h3>Neon Lights Festival</h3>
+          <div class="meta">Sat, May 10 &middot; Riverside Amphitheater</div>
+          <div class="price">$49.00</div>
+        </div>
+      </a>
+      <a href="event-detail.html?id=2" class="event-card" style="text-decoration:none;color:inherit">
+        <div class="card-img" style="background:linear-gradient(135deg,#f093fb,#f5576c)">&#127908;</div>
+        <div class="card-body">
+          <h3>Jazz Under the Stars</h3>
+          <div class="meta">Fri, May 16 &middot; Moonlight Garden</div>
+          <div class="price">$35.00</div>
+        </div>
+      </a>
+      <a href="event-detail.html?id=3" class="event-card" style="text-decoration:none;color:inherit">
+        <div class="card-img" style="background:linear-gradient(135deg,#4facfe,#00f2fe)">&#128187;</div>
+        <div class="card-body">
+          <h3>Tech Summit 2026</h3>
+          <div class="meta">Mon-Wed, Jun 2-4 &middot; Convention Center</div>
+          <div class="price">$199.00</div>
+        </div>
+      </a>
+      <a href="event-detail.html?id=4" class="event-card" style="text-decoration:none;color:inherit">
+        <div class="card-img" style="background:linear-gradient(135deg,#a18cd1,#fbc2eb)">&#127860;</div>
+        <div class="card-body">
+          <h3>Street Food Carnival</h3>
+          <div class="meta">Sun, May 25 &middot; Harbor Square</div>
+          <div class="price">$15.00</div>
+        </div>
+      </a>
+      <a href="event-detail.html?id=5" class="event-card" style="text-decoration:none;color:inherit">
+        <div class="card-img" style="background:linear-gradient(135deg,#ffecd2,#fcb69f)">&#9917;</div>
+        <div class="card-body">
+          <h3>Charity Soccer Match</h3>
+          <div class="meta">Sat, Jun 7 &middot; City Stadium</div>
+          <div class="price">$25.00</div>
+        </div>
+      </a>
+      <a href="event-detail.html?id=6" class="event-card" style="text-decoration:none;color:inherit">
+        <div class="card-img" style="background:linear-gradient(135deg,#89f7fe,#66a6ff)">&#127912;</div>
+        <div class="card-body">
+          <h3>Modern Art Exhibition</h3>
+          <div class="meta">Ongoing &middot; Gallery District</div>
+          <div class="price">$12.00</div>
+        </div>
+      </a>
+    </div>
+  </div>
+
+  <footer>Hooli Events &copy; 2026. Powered by Snowplow Analytics.</footer>
+
+  <script src="js/tracker.js"></script>
+</body>
+</html>

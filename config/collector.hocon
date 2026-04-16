@@ -1,0 +1,25 @@
+collector {
+  interface = "0.0.0.0"
+  port = 8080
+
+  license {
+    accept = true
+  }
+
+  streams {
+    good {
+      name = "hooli-raw"
+      region = "us-east-2"
+    }
+    bad {
+      name = "hooli-bad"
+      region = "us-east-2"
+    }
+  }
+
+  cookie {
+    enabled = true
+    name = "sp"
+    expiration = "365 days"
+  }
+}

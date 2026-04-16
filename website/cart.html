@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cart - Hooli Events</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="logo">Hooli Events</a>
+    <a href="events.html">Browse Events</a>
+    <a href="cart.html">Cart</a>
+  </nav>
+
+  <div class="container">
+    <h2>Your Cart</h2>
+
+    <table class="cart-table">
+      <thead>
+        <tr><th>Event</th><th>Qty</th><th>Price</th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Neon Lights Festival</td>
+          <td>2</td>
+          <td>$98.00</td>
+          <td><button class="btn btn-outline" onclick="trackRemoveFromCart('Neon Lights Festival', 98); this.closest('tr').remove();">Remove</button></td>
+        </tr>
+        <tr>
+          <td>Tech Summit 2026</td>
+          <td>1</td>
+          <td>$199.00</td>
+          <td><button class="btn btn-outline" onclick="trackRemoveFromCart('Tech Summit 2026', 199); this.closest('tr').remove();">Remove</button></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="cart-summary">
+      <div class="total">Total: $297.00</div>
+      <a href="checkout.html" class="btn">Proceed to Checkout</a>
+    </div>
+  </div>
+
+  <footer>Hooli Events &copy; 2026. Powered by Snowplow Analytics.</footer>
+
+  <script src="js/tracker.js"></script>
+</body>
+</html>

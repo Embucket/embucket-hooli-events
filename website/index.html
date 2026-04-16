@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hooli Events - Discover Live Events</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="logo">Hooli Events</a>
+    <a href="events.html">Browse Events</a>
+    <a href="cart.html">Cart (0)</a>
+    <a href="#" onclick="trackLogin('email'); alert('Logged in!'); return false;">Log In</a>
+    <a href="#" onclick="trackSignup('email'); alert('Signed up!'); return false;">Sign Up</a>
+  </nav>
+
+  <div class="hero">
+    <h1>Discover Unforgettable Events</h1>
+    <p>Find concerts, conferences, workshops, and more happening near you.</p>
+    <br>
+    <a href="events.html" class="btn">Browse All Events</a>
+  </div>
+
+  <div class="container">
+    <h2>Featured Events</h2>
+    <div class="event-grid">
+      <a href="event-detail.html?id=1" class="event-card" style="text-decoration:none;color:inherit">
+        <div class="card-img">&#127926;</div>
+        <div class="card-body">
+          <h3>Neon Lights Festival</h3>
+          <div class="meta">Sat, May 10 &middot; Riverside Amphitheater</div>
+          <div class="price">$49.00</div>
+        </div>
+      </a>
+      <a href="event-detail.html?id=2" class="event-card" style="text-decoration:none;color:inherit">
+        <div class="card-img" style="background:linear-gradient(135deg,#f093fb,#f5576c)">&#127908;</div>
+        <div class="card-body">
+          <h3>Jazz Under the Stars</h3>
+          <div class="meta">Fri, May 16 &middot; Moonlight Garden</div>
+          <div class="price">$35.00</div>
+        </div>
+      </a>
+      <a href="event-detail.html?id=3" class="event-card" style="text-decoration:none;color:inherit">
+        <div class="card-img" style="background:linear-gradient(135deg,#4facfe,#00f2fe)">&#128187;</div>
+        <div class="card-body">
+          <h3>Tech Summit 2026</h3>
+          <div class="meta">Mon-Wed, Jun 2-4 &middot; Convention Center</div>
+          <div class="price">$199.00</div>
+        </div>
+      </a>
+    </div>
+  </div>
+
+  <footer>Hooli Events &copy; 2026. Powered by Snowplow Analytics.</footer>
+
+  <script src="js/tracker.js"></script>
+</body>
+</html>

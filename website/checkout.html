@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Confirmed - Hooli Events</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="logo">Hooli Events</a>
+    <a href="events.html">Browse Events</a>
+    <a href="cart.html">Cart</a>
+  </nav>
+
+  <div class="container">
+    <div class="checkout-success">
+      <h2>Order Confirmed!</h2>
+      <p>Thank you for your purchase. Your order <strong id="order-id"></strong> has been confirmed.</p>
+      <p style="margin-top:1rem;color:#666">You will receive a confirmation email with your tickets shortly.</p>
+      <br>
+      <a href="events.html" class="btn">Browse More Events</a>
+    </div>
+  </div>
+
+  <footer>Hooli Events &copy; 2026. Powered by Snowplow Analytics.</footer>
+
+  <script src="js/tracker.js"></script>
+  <script>
+    var orderId = "HE-" + Math.random().toString(36).substring(2, 10).toUpperCase();
+    document.getElementById("order-id").textContent = orderId;
+    trackPurchase(orderId, 297.00);
+  </script>
+</body>
+</html>

@@ -1,0 +1,290 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Hooli Events - Compute (ECS Fargate, ALB, services)
+
+Parameters:
+  CollectorImageUri:
+    Type: String
+    Description: ECR image URI for collector
+  EnrichImageUri:
+    Type: String
+    Description: ECR image URI for enrich
+  LakeLoaderImageUri:
+    Type: String
+    Description: ECR image URI for lake loader
+  EventGeneratorImageUri:
+    Type: String
+    Description: ECR image URI for snowplow-event-generator experiment
+  TableBucketArn:
+    Type: String
+    Description: S3 Tables bucket ARN for lake loader config
+  CollectorDesiredCount:
+    Type: Number
+    Default: 0
+    Description: Set to 3 to run the real collector; 0 while experimenting with event-generator
+  EnrichDesiredCount:
+    Type: Number
+    Default: 0
+    Description: Set to 3 to run the real enrich; 0 while experimenting with event-generator
+
+Resources:
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: hooli-events
+
+  CollectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /hooli-events/collector
+      RetentionInDays: 14
+
+  EnrichLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /hooli-events/enrich
+      RetentionInDays: 14
+
+  LakeLoaderLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /hooli-events/lake-loader
+      RetentionInDays: 14
+
+  EventGeneratorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /hooli-events/event-generator
+      RetentionInDays: 14
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: hooli-events-alb
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !ImportValue hooli-events-PublicSubnet1Id
+        - !ImportValue hooli-events-PublicSubnet2Id
+      SecurityGroups:
+        - !ImportValue hooli-events-AlbSecurityGroupId
+
+  CollectorTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: hooli-collector-tg
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue hooli-events-VpcId
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref CollectorTargetGroup
+
+  CollectorTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: hooli-collector
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "512"
+      Memory: "1024"
+      ExecutionRoleArn: !ImportValue hooli-events-EcsExecutionRoleArn
+      TaskRoleArn: !ImportValue hooli-events-CollectorTaskRoleArn
+      ContainerDefinitions:
+        - Name: collector
+          Image: !Ref CollectorImageUri
+          Essential: true
+          Command: ["--config", "/snowplow/config/collector.hocon"]
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Environment:
+            - Name: ACCEPT_LIMITED_USE_LICENSE
+              Value: "yes"
+            - Name: JAVA_OPTS
+              Value: "-Xmx768m"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /hooli-events/collector
+              awslogs-region: us-east-2
+              awslogs-stream-prefix: ecs
+
+  EnrichTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: hooli-enrich
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "512"
+      Memory: "1024"
+      ExecutionRoleArn: !ImportValue hooli-events-EcsExecutionRoleArn
+      TaskRoleArn: !ImportValue hooli-events-EnrichTaskRoleArn
+      ContainerDefinitions:
+        - Name: enrich
+          Image: !Ref EnrichImageUri
+          Essential: true
+          Command:
+            - "--config"
+            - "/snowplow/config/enrich.hocon"
+            - "--iglu-config"
+            - "/snowplow/config/iglu-resolver.json"
+            - "--enrichments"
+            - "/snowplow/config/enrichments/"
+          Environment:
+            - Name: ACCEPT_LIMITED_USE_LICENSE
+              Value: "yes"
+            - Name: JAVA_OPTS
+              Value: "-Xmx768m"
+            - Name: AWS_REGION
+              Value: us-east-2
+            - Name: AWS_DEFAULT_REGION
+              Value: us-east-2
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /hooli-events/enrich
+              awslogs-region: us-east-2
+              awslogs-stream-prefix: ecs
+
+  LakeLoaderTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: hooli-lake-loader
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "4096"
+      Memory: "16384"
+      ExecutionRoleArn: !ImportValue hooli-events-EcsExecutionRoleArn
+      TaskRoleArn: !ImportValue hooli-events-LakeLoaderTaskRoleArn
+      ContainerDefinitions:
+        - Name: lake-loader
+          Image: !Ref LakeLoaderImageUri
+          Essential: true
+          Command:
+            - "--config"
+            - "/snowplow/config/lake-loader.hocon"
+            - "--iglu-config"
+            - "/snowplow/config/iglu-resolver.json"
+          Environment:
+            - Name: ACCEPT_LIMITED_USE_LICENSE
+              Value: "yes"
+            - Name: JAVA_OPTS
+              Value: "-Xmx12g --add-exports java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED --add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.math=ALL-UNNAMED --add-opens java.base/sun.security.action=ALL-UNNAMED --add-opens java.base/sun.util.calendar=ALL-UNNAMED"
+            - Name: AWS_REGION
+              Value: us-east-2
+            - Name: AWS_DEFAULT_REGION
+              Value: us-east-2
+            - Name: TABLE_BUCKET_ARN
+              Value: !Ref TableBucketArn
+            - Name: ICEBERG_LOCATION
+              Value: s3a://hooli-events-iceberg-glue-767397688925/warehouse/enriched_events
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /hooli-events/lake-loader
+              awslogs-region: us-east-2
+              awslogs-stream-prefix: ecs
+
+  EventGeneratorTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: hooli-event-generator
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "8192"
+      Memory: "16384"
+      ExecutionRoleArn: !ImportValue hooli-events-EcsExecutionRoleArn
+      TaskRoleArn: !ImportValue hooli-events-EventGeneratorTaskRoleArn
+      ContainerDefinitions:
+        - Name: event-generator
+          Image: !Ref EventGeneratorImageUri
+          Essential: true
+          Command: ["--config", "/snowplow/config/event-generator.hocon"]
+          Environment:
+            - Name: AWS_REGION
+              Value: us-east-2
+            - Name: AWS_DEFAULT_REGION
+              Value: us-east-2
+            - Name: JAVA_OPTS
+              Value: "-Xmx12g"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /hooli-events/event-generator
+              awslogs-region: us-east-2
+              awslogs-stream-prefix: ecs
+
+  CollectorService:
+    Type: AWS::ECS::Service
+    DependsOn: AlbListener
+    Properties:
+      ServiceName: collector
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref CollectorTaskDef
+      DesiredCount: !Ref CollectorDesiredCount
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !ImportValue hooli-events-PrivateSubnet1Id
+            - !ImportValue hooli-events-PrivateSubnet2Id
+          SecurityGroups:
+            - !ImportValue hooli-events-EcsSecurityGroupId
+      LoadBalancers:
+        - TargetGroupArn: !Ref CollectorTargetGroup
+          ContainerName: collector
+          ContainerPort: 8080
+
+  EnrichService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: enrich
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref EnrichTaskDef
+      DesiredCount: !Ref EnrichDesiredCount
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !ImportValue hooli-events-PrivateSubnet1Id
+            - !ImportValue hooli-events-PrivateSubnet2Id
+          SecurityGroups:
+            - !ImportValue hooli-events-EcsSecurityGroupId
+
+  LakeLoaderService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: lake-loader
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref LakeLoaderTaskDef
+      DesiredCount: 3
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !ImportValue hooli-events-PrivateSubnet1Id
+            - !ImportValue hooli-events-PrivateSubnet2Id
+          SecurityGroups:
+            - !ImportValue hooli-events-EcsSecurityGroupId
+
+Outputs:
+  CollectorEndpoint:
+    Description: ALB DNS name - use as collector endpoint
+    Value: !GetAtt Alb.DNSName
+    Export:
+      Name: hooli-events-CollectorEndpoint

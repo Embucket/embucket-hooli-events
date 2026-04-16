@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Event Details - Hooli Events</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="logo">Hooli Events</a>
+    <a href="events.html">Browse Events</a>
+    <a href="cart.html">Cart (0)</a>
+  </nav>
+
+  <div class="detail-header">
+    <h1 id="event-name">Neon Lights Festival</h1>
+    <p id="event-date">Saturday, May 10, 2026 &middot; 7:00 PM</p>
+  </div>
+
+  <div class="container">
+    <div class="detail-body">
+      <div class="detail-info">
+        <h2>About This Event</h2>
+        <p>Experience an electrifying night of music, lights, and community at the Riverside Amphitheater.
+           Featuring world-class DJs, stunning visual installations, and gourmet food vendors.
+           Doors open at 6 PM, main stage starts at 7 PM.</p>
+        <br>
+        <p><strong>Venue:</strong> Riverside Amphitheater, 500 River Rd</p>
+        <p><strong>Ages:</strong> All ages welcome</p>
+        <p><strong>Parking:</strong> Free on-site parking available</p>
+      </div>
+
+      <div class="detail-sidebar">
+        <h3>Get Tickets</h3>
+        <p style="margin:1rem 0"><strong id="event-price">$49.00</strong> per ticket</p>
+        <label>Quantity:
+          <select id="qty" style="padding:0.4rem;border-radius:4px;border:1px solid #ccc">
+            <option>1</option><option>2</option><option>3</option><option>4</option>
+          </select>
+        </label>
+        <br><br>
+        <button class="btn" style="width:100%" onclick="addToCart()">Add to Cart</button>
+        <br><br>
+        <a href="cart.html" class="btn btn-outline" style="width:100%;text-align:center">View Cart</a>
+      </div>
+    </div>
+  </div>
+
+  <footer>Hooli Events &copy; 2026. Powered by Snowplow Analytics.</footer>
+
+  <script src="js/tracker.js"></script>
+  <script>
+    var events = {
+      "1": { name: "Neon Lights Festival", price: 49, date: "Saturday, May 10, 2026" },
+      "2": { name: "Jazz Under the Stars", price: 35, date: "Friday, May 16, 2026" },
+      "3": { name: "Tech Summit 2026", price: 199, date: "Mon-Wed, Jun 2-4, 2026" },
+      "4": { name: "Street Food Carnival", price: 15, date: "Sunday, May 25, 2026" },
+      "5": { name: "Charity Soccer Match", price: 25, date: "Saturday, Jun 7, 2026" },
+      "6": { name: "Modern Art Exhibition", price: 12, date: "Ongoing" }
+    };
+    var params = new URLSearchParams(window.location.search);
+    var id = params.get("id") || "1";
+    var ev = events[id] || events["1"];
+    document.getElementById("event-name").textContent = ev.name;
+    document.getElementById("event-date").textContent = ev.date;
+    document.getElementById("event-price").textContent = "$" + ev.price.toFixed(2);
+    document.title = ev.name + " - Hooli Events";
+
+    function addToCart() {
+      var qty = parseInt(document.getElementById("qty").value);
+      trackAddToCart(ev.name, ev.price * qty);
+      alert(qty + "x " + ev.name + " added to cart!");
+    }
+  </script>
+</body>
+</html>

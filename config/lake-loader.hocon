@@ -1,0 +1,46 @@
+{
+  "license": {
+    "accept": true
+  }
+
+  "input": {
+    "streamName": "hooli-enriched"
+    "appName": "hooli-lake-loader"
+    "initialPosition": {
+      "type": "LATEST"
+    }
+    "retrievalMode": {
+      "type": "Polling"
+      "maxRecords": 1000
+    }
+  }
+
+  "output": {
+    "good": {
+      "type": "Iceberg"
+      "location": ${ICEBERG_LOCATION}
+      "database": "analytics_glue"
+      "table": "enriched_events"
+      "icebergTableProperties": {
+        "write.metadata.compression-codec": "none"
+      }
+
+      "catalog": {
+        "type": "Glue"
+        "options": {
+          "client.region": "us-east-2"
+          "io-impl": "org.apache.iceberg.aws.s3.S3FileIO"
+          "glue.skip-name-validation": "true"
+        }
+      }
+    }
+
+    "bad": {
+      "streamName": "hooli-bad"
+      "recordLimit": 500
+      "byteLimit": 5242880
+    }
+  }
+
+  "windowing": "5 minutes"
+}
