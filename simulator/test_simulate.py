@@ -218,3 +218,40 @@ def test_change_form_shape():
     assert decoded["data"]["schema"] == "iglu:com.snowplowanalytics.snowplow/change_form/jsonschema/1-0-0"
     assert decoded["data"]["data"]["value"] == "3"
     assert decoded["data"]["data"]["type"] == "number"
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_user_creates_new_when_pool_empty():
+    simulate.USERS.clear()
+    uid, sidx = await simulate.get_or_create_user(new_prob=0.0)
+    assert sidx == 1
+    assert uid in simulate.USERS
+    assert simulate.USERS[uid] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_user_returns_existing_with_new_prob_zero():
+    simulate.USERS.clear()
+    simulate.USERS["pre-existing-uid"] = 3
+    uid, sidx = await simulate.get_or_create_user(new_prob=0.0)
+    assert uid == "pre-existing-uid"
+    assert sidx == 4
+    assert simulate.USERS[uid] == 4
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_user_creates_new_with_new_prob_one():
+    simulate.USERS.clear()
+    simulate.USERS["pre-existing-uid"] = 3
+    uid, sidx = await simulate.get_or_create_user(new_prob=1.0)
+    assert uid != "pre-existing-uid"
+    assert sidx == 1
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_user_evicts_oldest_at_cap(monkeypatch):
+    simulate.USERS.clear()
+    monkeypatch.setattr(simulate, "USER_POOL_MAX", 3)
+    for _ in range(5):
+        await simulate.get_or_create_user(new_prob=1.0)
+    assert len(simulate.USERS) == 3

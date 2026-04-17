@@ -57,6 +57,36 @@ WEB_PAGE_SCHEMA = "iglu:com.snowplowanalytics.snowplow/web_page/jsonschema/1-0-0
 CONTEXTS_WRAPPER_SCHEMA = "iglu:com.snowplowanalytics.snowplow/contexts/jsonschema/1-0-0"
 
 
+from collections import OrderedDict
+
+USER_POOL_MAX = int(os.environ.get("USER_POOL_MAX", "100000"))
+NEW_USER_PROBABILITY = float(os.environ.get("NEW_USER_PROBABILITY", "0.20"))
+
+USERS: "OrderedDict[str, int]" = OrderedDict()
+USERS_LOCK = asyncio.Lock()
+
+
+async def get_or_create_user(new_prob=None):
+    """Return (domain_userid, session_idx) from a per-task LRU pool.
+
+    With probability (1 - new_prob) return a randomly-chosen existing user
+    with session_idx bumped; otherwise create a new user with session_idx=1.
+    """
+    if new_prob is None:
+        new_prob = NEW_USER_PROBABILITY
+    async with USERS_LOCK:
+        if USERS and random.random() > new_prob:
+            uid = random.choice(list(USERS.keys()))
+            USERS.move_to_end(uid)
+            USERS[uid] += 1
+            return uid, USERS[uid]
+        uid = str(uuid.uuid4())
+        USERS[uid] = 1
+        if len(USERS) > USER_POOL_MAX:
+            USERS.popitem(last=False)
+        return uid, 1
+
+
 def encode_cx(contexts):
     """Encode a list of self-describing contexts as the tp2 `cx` field.
 
