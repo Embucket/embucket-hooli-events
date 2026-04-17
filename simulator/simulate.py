@@ -136,6 +136,25 @@ def struct_event(domain_userid, session_id, session_idx, category, action,
     return ev
 
 
+def page_ping(domain_userid, session_id, session_idx, page_view_id,
+              url, title, pp_xoff=(0, 0), pp_yoff=(0, 0), dtm_ms=None):
+    """Emit a Snowplow page_ping event carrying the parent page_view's web_page context.
+
+    pp_xoff and pp_yoff are (min, max) pairs of pixel offsets that real trackers
+    record as the scroll extent observed during the ping interval.
+    """
+    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms)
+    ev["e"] = "pp"
+    ev["url"] = url
+    ev["page"] = title
+    ev["pp_mix"] = str(pp_xoff[0])
+    ev["pp_max"] = str(pp_xoff[1])
+    ev["pp_miy"] = str(pp_yoff[0])
+    ev["pp_may"] = str(pp_yoff[1])
+    ev["cx"] = encode_cx([web_page_context(page_view_id)])
+    return ev
+
+
 def send_events(endpoint, events_batch):
     payload = {
         "schema": "iglu:com.snowplowanalytics.snowplow/payload_data/jsonschema/1-0-4",

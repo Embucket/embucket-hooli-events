@@ -118,3 +118,30 @@ def test_base_event_backdated_dtm_keeps_stm_now():
     assert t0 <= int(ev["stm"]) <= t1
     # stm − dtm ≈ 30 s, the gap enrich uses for derived_tstamp
     assert 29_000 < int(ev["stm"]) - int(ev["dtm"]) < 31_000
+
+
+def test_page_ping_has_pp_event_type_and_web_page_context():
+    pv_id = "11111111-2222-3333-4444-555555555555"
+    ev = simulate.page_ping("u", "s", 1, pv_id,
+                            url="https://hooli-events.com/",
+                            title="Hooli Events",
+                            pp_xoff=(0, 100),
+                            pp_yoff=(0, 200))
+    assert ev["e"] == "pp"
+    assert ev["url"] == "https://hooli-events.com/"
+    assert ev["page"] == "Hooli Events"
+    assert ev["pp_mix"] == "0" and ev["pp_max"] == "100"
+    assert ev["pp_miy"] == "0" and ev["pp_may"] == "200"
+    decoded = decode_cx(ev["cx"])
+    [web_page] = decoded["data"]
+    assert web_page["data"]["id"] == pv_id
+
+
+def test_page_ping_backdated_dtm_preserves_stm_now():
+    now_ms = int(_time.time() * 1000)
+    past_ms = now_ms - 20_000
+    ev = simulate.page_ping("u", "s", 1, "pvid",
+                            url="https://x/", title="x",
+                            dtm_ms=past_ms)
+    assert int(ev["dtm"]) == past_ms
+    assert int(ev["stm"]) >= now_ms
