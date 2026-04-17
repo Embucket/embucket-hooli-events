@@ -25,6 +25,13 @@ Parameters:
     Type: Number
     Default: 0
     Description: Set to 3 to run the real enrich; 0 while experimenting with event-generator
+  LoaderImageUri:
+    Type: String
+    Description: ECR image URI for the custom event loader
+  LoaderDesiredCount:
+    Type: Number
+    Default: 0
+    Description: Set to 1 to run the custom loader; 0 to stop it
 
 Resources:
   EcsCluster:
@@ -55,6 +62,12 @@ Resources:
     Properties:
       LogGroupName: /hooli-events/event-generator
       RetentionInDays: 14
+
+  LoaderLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /hooli-events/loader
+      RetentionInDays: 7
 
   Alb:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -226,6 +239,36 @@ Resources:
               awslogs-region: us-east-2
               awslogs-stream-prefix: ecs
 
+  LoaderTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: hooli-loader
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "1024"
+      Memory: "2048"
+      ExecutionRoleArn: !ImportValue hooli-events-EcsExecutionRoleArn
+      TaskRoleArn: !ImportValue hooli-events-LoaderTaskRoleArn
+      ContainerDefinitions:
+        - Name: loader
+          Image: !Ref LoaderImageUri
+          Essential: true
+          Environment:
+            - Name: AWS_REGION
+              Value: us-east-2
+            - Name: COLLECTOR_ENDPOINT
+              Value: !Sub "http://${Alb.DNSName}"
+            - Name: SESSIONS_PER_MIN
+              Value: "60"
+            - Name: CONCURRENCY
+              Value: "20"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /hooli-events/loader
+              awslogs-region: us-east-2
+              awslogs-stream-prefix: ecs
+
   CollectorService:
     Type: AWS::ECS::Service
     DependsOn: AlbListener
@@ -272,6 +315,23 @@ Resources:
       Cluster: !Ref EcsCluster
       TaskDefinition: !Ref LakeLoaderTaskDef
       DesiredCount: 3
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !ImportValue hooli-events-PrivateSubnet1Id
+            - !ImportValue hooli-events-PrivateSubnet2Id
+          SecurityGroups:
+            - !ImportValue hooli-events-EcsSecurityGroupId
+
+  LoaderService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: loader
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref LoaderTaskDef
+      DesiredCount: !Ref LoaderDesiredCount
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
