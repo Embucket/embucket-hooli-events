@@ -202,7 +202,7 @@ Resources:
             - Name: TABLE_BUCKET_ARN
               Value: !Ref TableBucketArn
             - Name: ICEBERG_LOCATION
-              Value: s3a://hooli-events-iceberg-glue-767397688925/warehouse/enriched_events
+              Value: s3://hooli-events-iceberg-glue-767397688925/warehouse/hooli_events_0417_v2
           LogConfiguration:
             LogDriver: awslogs
             Options:
