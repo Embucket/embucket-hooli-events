@@ -155,6 +155,68 @@ def page_ping(domain_userid, session_id, session_idx, page_view_id,
     return ev
 
 
+UNSTRUCT_WRAPPER_SCHEMA = "iglu:com.snowplowanalytics.snowplow/unstruct_event/jsonschema/1-0-0"
+LINK_CLICK_SCHEMA       = "iglu:com.snowplowanalytics.snowplow/link_click/jsonschema/1-0-1"
+SUBMIT_FORM_SCHEMA      = "iglu:com.snowplowanalytics.snowplow/submit_form/jsonschema/1-0-0"
+FOCUS_FORM_SCHEMA       = "iglu:com.snowplowanalytics.snowplow/focus_form/jsonschema/1-0-0"
+CHANGE_FORM_SCHEMA      = "iglu:com.snowplowanalytics.snowplow/change_form/jsonschema/1-0-0"
+
+
+def _encode_ue(ue_schema, ue_data):
+    payload = {"schema": UNSTRUCT_WRAPPER_SCHEMA,
+               "data": {"schema": ue_schema, "data": ue_data}}
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def unstruct_event(domain_userid, session_id, session_idx,
+                   ue_schema, ue_data, page_view_id=None, dtm_ms=None):
+    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms)
+    ev["e"] = "ue"
+    ev["ue_px"] = _encode_ue(ue_schema, ue_data)
+    if page_view_id is not None:
+        ev["cx"] = encode_cx([web_page_context(page_view_id)])
+    return ev
+
+
+def link_click(domain_userid, session_id, session_idx, page_view_id,
+               target_url, element_id="", dtm_ms=None):
+    return unstruct_event(domain_userid, session_id, session_idx,
+                          LINK_CLICK_SCHEMA,
+                          {"targetUrl": target_url, "elementId": element_id},
+                          page_view_id=page_view_id, dtm_ms=dtm_ms)
+
+
+def submit_form(domain_userid, session_id, session_idx, page_view_id,
+                form_id, elements=None, dtm_ms=None):
+    return unstruct_event(domain_userid, session_id, session_idx,
+                          SUBMIT_FORM_SCHEMA,
+                          {"formId": form_id, "formClasses": [],
+                           "elements": elements or []},
+                          page_view_id=page_view_id, dtm_ms=dtm_ms)
+
+
+def focus_form(domain_userid, session_id, session_idx, page_view_id,
+               form_id, element_id, node_name="INPUT", dtm_ms=None):
+    return unstruct_event(domain_userid, session_id, session_idx,
+                          FOCUS_FORM_SCHEMA,
+                          {"formId": form_id, "elementId": element_id,
+                           "nodeName": node_name, "elementClasses": [],
+                           "value": None},
+                          page_view_id=page_view_id, dtm_ms=dtm_ms)
+
+
+def change_form(domain_userid, session_id, session_idx, page_view_id,
+                form_id, element_id, new_value,
+                node_name="INPUT", type_="text", dtm_ms=None):
+    return unstruct_event(domain_userid, session_id, session_idx,
+                          CHANGE_FORM_SCHEMA,
+                          {"formId": form_id, "elementId": element_id,
+                           "nodeName": node_name, "type": type_,
+                           "elementClasses": [], "value": new_value},
+                          page_view_id=page_view_id, dtm_ms=dtm_ms)
+
+
 def send_events(endpoint, events_batch):
     payload = {
         "schema": "iglu:com.snowplowanalytics.snowplow/payload_data/jsonschema/1-0-4",

@@ -145,3 +145,76 @@ def test_page_ping_backdated_dtm_preserves_stm_now():
                             dtm_ms=past_ms)
     assert int(ev["dtm"]) == past_ms
     assert int(ev["stm"]) >= now_ms
+
+
+UNSTRUCT_WRAPPER = "iglu:com.snowplowanalytics.snowplow/unstruct_event/jsonschema/1-0-0"
+
+
+def test_unstruct_event_wraps_payload_in_self_describing_envelope():
+    ev = simulate.unstruct_event(
+        "u", "s", 1,
+        ue_schema="iglu:com.example/test/jsonschema/1-0-0",
+        ue_data={"foo": "bar"},
+        page_view_id="pvid",
+    )
+    assert ev["e"] == "ue"
+    pad = "=" * (-len(ev["ue_px"]) % 4)
+    decoded = json.loads(base64.urlsafe_b64decode(ev["ue_px"] + pad))
+    assert decoded["schema"] == UNSTRUCT_WRAPPER
+    assert decoded["data"]["schema"] == "iglu:com.example/test/jsonschema/1-0-0"
+    assert decoded["data"]["data"] == {"foo": "bar"}
+    # web_page context attached when pv_id passed
+    decoded_cx = decode_cx(ev["cx"])
+    assert decoded_cx["data"][0]["data"]["id"] == "pvid"
+
+
+def test_unstruct_event_omits_cx_when_no_pv_id():
+    ev = simulate.unstruct_event("u", "s", 1,
+                                 ue_schema="iglu:com.example/x/jsonschema/1-0-0",
+                                 ue_data={})
+    assert "cx" not in ev
+
+
+def test_link_click_shape():
+    ev = simulate.link_click("u", "s", 1, "pvid",
+                             target_url="https://hooli-events.com/events.html",
+                             element_id="featured-0")
+    pad = "=" * (-len(ev["ue_px"]) % 4)
+    decoded = json.loads(base64.urlsafe_b64decode(ev["ue_px"] + pad))
+    assert decoded["data"]["schema"] == "iglu:com.snowplowanalytics.snowplow/link_click/jsonschema/1-0-1"
+    assert decoded["data"]["data"]["targetUrl"] == "https://hooli-events.com/events.html"
+    assert decoded["data"]["data"]["elementId"] == "featured-0"
+
+
+def test_submit_form_shape():
+    ev = simulate.submit_form("u", "s", 1, "pvid",
+                              form_id="checkout",
+                              elements=[{"name": "email", "value": "user@example.com",
+                                         "nodeName": "INPUT", "type": "email"}])
+    pad = "=" * (-len(ev["ue_px"]) % 4)
+    decoded = json.loads(base64.urlsafe_b64decode(ev["ue_px"] + pad))
+    assert decoded["data"]["schema"] == "iglu:com.snowplowanalytics.snowplow/submit_form/jsonschema/1-0-0"
+    assert decoded["data"]["data"]["formId"] == "checkout"
+    assert decoded["data"]["data"]["elements"][0]["name"] == "email"
+
+
+def test_focus_form_shape():
+    ev = simulate.focus_form("u", "s", 1, "pvid",
+                             form_id="checkout", element_id="email")
+    pad = "=" * (-len(ev["ue_px"]) % 4)
+    decoded = json.loads(base64.urlsafe_b64decode(ev["ue_px"] + pad))
+    assert decoded["data"]["schema"] == "iglu:com.snowplowanalytics.snowplow/focus_form/jsonschema/1-0-0"
+    assert decoded["data"]["data"]["formId"] == "checkout"
+    assert decoded["data"]["data"]["elementId"] == "email"
+    assert decoded["data"]["data"]["nodeName"] == "INPUT"
+
+
+def test_change_form_shape():
+    ev = simulate.change_form("u", "s", 1, "pvid",
+                              form_id="cart", element_id="qty",
+                              new_value="3", node_name="INPUT", type_="number")
+    pad = "=" * (-len(ev["ue_px"]) % 4)
+    decoded = json.loads(base64.urlsafe_b64decode(ev["ue_px"] + pad))
+    assert decoded["data"]["schema"] == "iglu:com.snowplowanalytics.snowplow/change_form/jsonschema/1-0-0"
+    assert decoded["data"]["data"]["value"] == "3"
+    assert decoded["data"]["data"]["type"] == "number"
