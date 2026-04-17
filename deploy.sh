@@ -39,12 +39,14 @@ COLLECTOR_REPO=$(get_output "${STACK_PREFIX}-data" "CollectorRepoUri")
 ENRICH_REPO=$(get_output "${STACK_PREFIX}-data" "EnrichRepoUri")
 LAKE_LOADER_REPO=$(get_output "${STACK_PREFIX}-data" "LakeLoaderRepoUri")
 EVENT_GENERATOR_REPO=$(get_output "${STACK_PREFIX}-data" "EventGeneratorRepoUri")
+LOADER_REPO=$(get_output "${STACK_PREFIX}-data" "LoaderRepoUri")
 TABLE_BUCKET_ARN=$(get_output "${STACK_PREFIX}-data" "TableBucketArn")
 
 echo "Collector repo:       $COLLECTOR_REPO"
 echo "Enrich repo:          $ENRICH_REPO"
 echo "Lake Loader repo:     $LAKE_LOADER_REPO"
 echo "Event Generator repo: $EVENT_GENERATOR_REPO"
+echo "Loader repo:          $LOADER_REPO"
 echo "Table bucket ARN:     $TABLE_BUCKET_ARN"
 
 # 4. Build and push Docker images
@@ -64,6 +66,9 @@ docker push "${LAKE_LOADER_REPO}:latest"
 docker build --platform linux/amd64 -f docker/event-generator/Dockerfile -t "${EVENT_GENERATOR_REPO}:latest" config/
 docker push "${EVENT_GENERATOR_REPO}:latest"
 
+docker build --platform linux/amd64 -f docker/loader/Dockerfile -t "${LOADER_REPO}:latest" .
+docker push "${LOADER_REPO}:latest"
+
 # 5. Deploy compute stack
 echo "--- Deploying compute stack ---"
 aws cloudformation deploy \
@@ -77,9 +82,11 @@ aws cloudformation deploy \
     "EnrichImageUri=${ENRICH_REPO}:latest" \
     "LakeLoaderImageUri=${LAKE_LOADER_REPO}:latest" \
     "EventGeneratorImageUri=${EVENT_GENERATOR_REPO}:latest" \
+    "LoaderImageUri=${LOADER_REPO}:latest" \
     "TableBucketArn=${TABLE_BUCKET_ARN}" \
     "CollectorDesiredCount=${COLLECTOR_DESIRED_COUNT:-0}" \
-    "EnrichDesiredCount=${ENRICH_DESIRED_COUNT:-0}"
+    "EnrichDesiredCount=${ENRICH_DESIRED_COUNT:-0}" \
+    "LoaderDesiredCount=${LOADER_DESIRED_COUNT:-0}"
 
 # 6. Get collector endpoint
 ALB_DNS=$(get_output "${STACK_PREFIX}-compute" "CollectorEndpoint")
@@ -99,6 +106,6 @@ echo "Collector endpoint: http://${ALB_DNS}"
 echo ""
 echo "Next steps:"
 echo "  1. Update website/js/tracker.js: set COLLECTOR_ENDPOINT = \"http://${ALB_DNS}\""
-echo "  2. Serve the website:  cd website && python3 -m http.server 8000"
-echo "  3. Run the simulator:  python3 simulator/simulate.py --endpoint http://${ALB_DNS}"
-echo "  4. Query in Athena:    SELECT * FROM \"hooli-s3tables\".\"analytics\".\"enriched_events\" LIMIT 10"
+echo "  2. Serve the website:   cd website && python3 -m http.server 8000"
+echo "  3. Scale up pipeline:   COLLECTOR_DESIRED_COUNT=3 ENRICH_DESIRED_COUNT=3 LOADER_DESIRED_COUNT=1 ./deploy.sh"
+echo "  4. Query in Athena:     SELECT * FROM \"hooli-s3tables\".\"analytics\".\"hooli_events_0417\" LIMIT 10"
