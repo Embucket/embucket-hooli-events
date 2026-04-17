@@ -10,6 +10,8 @@ Usage:
 """
 
 import argparse
+import base64
+import json
 import random
 import time
 import uuid
@@ -43,6 +45,24 @@ CATEGORIES = ["music", "tech", "food", "sports"]
 RESOLUTIONS = ["1920x1080", "1440x900", "1366x768", "2560x1440", "390x844"]
 LANGUAGES = ["en-US", "en-GB", "es-ES", "fr-FR", "de-DE"]
 
+WEB_PAGE_SCHEMA = "iglu:com.snowplowanalytics.snowplow/web_page/jsonschema/1-0-0"
+CONTEXTS_WRAPPER_SCHEMA = "iglu:com.snowplowanalytics.snowplow/contexts/jsonschema/1-0-0"
+
+
+def encode_cx(contexts):
+    """Encode a list of self-describing contexts as the tp2 `cx` field.
+
+    Returns base64url-encoded JSON of the contexts wrapper, without padding.
+    This matches what the Snowplow JS tracker sends.
+    """
+    payload = {"schema": CONTEXTS_WRAPPER_SCHEMA, "data": list(contexts)}
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def web_page_context(page_view_id):
+    return {"schema": WEB_PAGE_SCHEMA, "data": {"id": page_view_id}}
+
 
 def timestamp_ms():
     return str(int(time.time() * 1000))
@@ -66,7 +86,15 @@ def base_event(domain_userid, session_id, session_idx):
     }
 
 
-def page_view(domain_userid, session_id, session_idx, page_key, event=None):
+def page_view(domain_userid, session_id, session_idx, page_key, event=None, page_view_id=None):
+    ev, _ = page_view_with_id(
+        domain_userid, session_id, session_idx, page_key, event=event, page_view_id=page_view_id
+    )
+    return ev
+
+
+def page_view_with_id(domain_userid, session_id, session_idx, page_key, event=None, page_view_id=None):
+    """Like page_view but also returns the generated page_view_id for reuse by later struct events."""
     url_tpl, title_tpl = PAGES[page_key]
     fmt = {}
     if event:
@@ -74,14 +102,18 @@ def page_view(domain_userid, session_id, session_idx, page_key, event=None):
     url = url_tpl.format(**fmt) if fmt else url_tpl
     title = title_tpl.format(**fmt) if fmt else title_tpl
 
+    if page_view_id is None:
+        page_view_id = str(uuid.uuid4())
+
     ev = base_event(domain_userid, session_id, session_idx)
     ev["e"] = "pv"
     ev["url"] = url
     ev["page"] = title
-    return ev
+    ev["cx"] = encode_cx([web_page_context(page_view_id)])
+    return ev, page_view_id
 
 
-def struct_event(domain_userid, session_id, session_idx, category, action, label="", value=None):
+def struct_event(domain_userid, session_id, session_idx, category, action, label="", value=None, page_view_id=None):
     ev = base_event(domain_userid, session_id, session_idx)
     ev["e"] = "se"
     ev["se_ca"] = category
@@ -90,6 +122,8 @@ def struct_event(domain_userid, session_id, session_idx, category, action, label
         ev["se_la"] = label
     if value is not None:
         ev["se_va"] = str(value)
+    if page_view_id is not None:
+        ev["cx"] = encode_cx([web_page_context(page_view_id)])
     return ev
 
 
@@ -110,46 +144,51 @@ def simulate_session(endpoint, delay):
     events = []
 
     # 1. Homepage
-    events.append(page_view(domain_userid, session_id, session_idx, "home"))
+    ev, home_pv = page_view_with_id(domain_userid, session_id, session_idx, "home")
+    events.append(ev)
     time.sleep(delay)
 
     # 2. Event listing
-    events.append(page_view(domain_userid, session_id, session_idx, "listing"))
+    ev, listing_pv = page_view_with_id(domain_userid, session_id, session_idx, "listing")
+    events.append(ev)
     time.sleep(delay)
 
-    # 3. Maybe search
+    # 3. Maybe search (on the listing page)
     if random.random() < 0.6:
         term = random.choice(SEARCH_TERMS)
-        events.append(struct_event(domain_userid, session_id, session_idx, "search", "submit", term))
+        events.append(struct_event(domain_userid, session_id, session_idx, "search", "submit", term, page_view_id=listing_pv))
         time.sleep(delay)
 
-    # 4. Maybe filter
+    # 4. Maybe filter (on the listing page)
     if random.random() < 0.4:
         cat = random.choice(CATEGORIES)
-        events.append(struct_event(domain_userid, session_id, session_idx, "filter", "apply", cat))
+        events.append(struct_event(domain_userid, session_id, session_idx, "filter", "apply", cat, page_view_id=listing_pv))
         time.sleep(delay)
 
     # 5. View event detail
     chosen_event = random.choice(EVENTS)
-    events.append(page_view(domain_userid, session_id, session_idx, "detail", chosen_event))
+    ev, detail_pv = page_view_with_id(domain_userid, session_id, session_idx, "detail", chosen_event)
+    events.append(ev)
     time.sleep(delay)
 
-    # 6. Maybe add to cart (70% chance)
+    # 6. Maybe add to cart (70% chance — on the detail page)
     if random.random() < 0.7:
         qty = random.randint(1, 4)
         total = chosen_event["price"] * qty
-        events.append(struct_event(domain_userid, session_id, session_idx, "cart", "add_to_cart", chosen_event["name"], total))
+        events.append(struct_event(domain_userid, session_id, session_idx, "cart", "add_to_cart", chosen_event["name"], total, page_view_id=detail_pv))
         time.sleep(delay)
 
         # 7. View cart
-        events.append(page_view(domain_userid, session_id, session_idx, "cart"))
+        ev, cart_pv = page_view_with_id(domain_userid, session_id, session_idx, "cart")
+        events.append(ev)
         time.sleep(delay)
 
-        # 8. Maybe purchase (60% of those who add to cart)
+        # 8. Maybe purchase (60% of those who add to cart — on the checkout page)
         if random.random() < 0.6:
             order_id = "HE-" + uuid.uuid4().hex[:8].upper()
-            events.append(page_view(domain_userid, session_id, session_idx, "checkout"))
-            events.append(struct_event(domain_userid, session_id, session_idx, "ecommerce", "purchase", order_id, total))
+            ev, checkout_pv = page_view_with_id(domain_userid, session_id, session_idx, "checkout")
+            events.append(ev)
+            events.append(struct_event(domain_userid, session_id, session_idx, "ecommerce", "purchase", order_id, total, page_view_id=checkout_pv))
             time.sleep(delay)
 
     # Send all events for this session in one batch
