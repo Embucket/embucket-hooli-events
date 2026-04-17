@@ -95,3 +95,26 @@ async def test_rate_regulator_respects_sessions_per_min():
     for s in slots:
         reg.release(s)
     await reg.stop()
+
+
+import time as _time
+
+def test_base_event_default_dtm_matches_stm_now():
+    t0 = int(_time.time() * 1000)
+    ev = simulate.base_event("u", "s", 1)
+    t1 = int(_time.time() * 1000)
+    assert t0 <= int(ev["dtm"]) <= t1
+    assert t0 <= int(ev["stm"]) <= t1
+    # default: dtm and stm are both "now", within a millisecond of each other
+    assert abs(int(ev["dtm"]) - int(ev["stm"])) < 5
+
+
+def test_base_event_backdated_dtm_keeps_stm_now():
+    past_ms = int(_time.time() * 1000) - 30_000  # 30 s ago
+    t0 = int(_time.time() * 1000)
+    ev = simulate.base_event("u", "s", 1, dtm_ms=past_ms)
+    t1 = int(_time.time() * 1000)
+    assert int(ev["dtm"]) == past_ms
+    assert t0 <= int(ev["stm"]) <= t1
+    # stm − dtm ≈ 30 s, the gap enrich uses for derived_tstamp
+    assert 29_000 < int(ev["stm"]) - int(ev["dtm"]) < 31_000

@@ -72,11 +72,10 @@ def web_page_context(page_view_id):
     return {"schema": WEB_PAGE_SCHEMA, "data": {"id": page_view_id}}
 
 
-def timestamp_ms():
-    return str(int(time.time() * 1000))
-
-
-def base_event(domain_userid, session_id, session_idx):
+def base_event(domain_userid, session_id, session_idx, dtm_ms=None):
+    now_ms = int(time.time() * 1000)
+    if dtm_ms is None:
+        dtm_ms = now_ms
     return {
         "tv": TRACKER_VERSION,
         "tna": TRACKER_NAMESPACE,
@@ -85,8 +84,8 @@ def base_event(domain_userid, session_id, session_idx):
         "duid": domain_userid,
         "sid": session_id,
         "vid": str(session_idx),
-        "dtm": timestamp_ms(),
-        "stm": timestamp_ms(),
+        "dtm": str(dtm_ms),      # event time (possibly backdated)
+        "stm": str(now_ms),      # send time — always now
         "tz": "America/New_York",
         "lang": random.choice(LANGUAGES),
         "res": random.choice(RESOLUTIONS),
@@ -94,14 +93,15 @@ def base_event(domain_userid, session_id, session_idx):
     }
 
 
-def page_view(domain_userid, session_id, session_idx, page_key, event=None, page_view_id=None):
-    ev, _ = page_view_with_id(
-        domain_userid, session_id, session_idx, page_key, event=event, page_view_id=page_view_id
-    )
+def page_view(domain_userid, session_id, session_idx, page_key,
+              event=None, page_view_id=None, dtm_ms=None):
+    ev, _ = page_view_with_id(domain_userid, session_id, session_idx, page_key,
+                              event=event, page_view_id=page_view_id, dtm_ms=dtm_ms)
     return ev
 
 
-def page_view_with_id(domain_userid, session_id, session_idx, page_key, event=None, page_view_id=None):
+def page_view_with_id(domain_userid, session_id, session_idx, page_key,
+                      event=None, page_view_id=None, dtm_ms=None):
     """Like page_view but also returns the generated page_view_id for reuse by later struct events."""
     url_tpl, title_tpl = PAGES[page_key]
     fmt = {}
@@ -113,7 +113,7 @@ def page_view_with_id(domain_userid, session_id, session_idx, page_key, event=No
     if page_view_id is None:
         page_view_id = str(uuid.uuid4())
 
-    ev = base_event(domain_userid, session_id, session_idx)
+    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms)
     ev["e"] = "pv"
     ev["url"] = url
     ev["page"] = title
@@ -121,8 +121,9 @@ def page_view_with_id(domain_userid, session_id, session_idx, page_key, event=No
     return ev, page_view_id
 
 
-def struct_event(domain_userid, session_id, session_idx, category, action, label="", value=None, page_view_id=None):
-    ev = base_event(domain_userid, session_id, session_idx)
+def struct_event(domain_userid, session_id, session_idx, category, action,
+                 label="", value=None, page_view_id=None, dtm_ms=None):
+    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms)
     ev["e"] = "se"
     ev["se_ca"] = category
     ev["se_ac"] = action
