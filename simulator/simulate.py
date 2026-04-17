@@ -62,6 +62,65 @@ from collections import OrderedDict
 USER_POOL_MAX = int(os.environ.get("USER_POOL_MAX", "100000"))
 NEW_USER_PROBABILITY = float(os.environ.get("NEW_USER_PROBABILITY", "0.20"))
 
+BOUNCE_PROBABILITY               = float(os.environ.get("BOUNCE_PROBABILITY", "0.30"))
+CONTINUE_PAGE_PROBABILITY        = float(os.environ.get("CONTINUE_PAGE_PROBABILITY", "0.70"))
+MAX_EVENTS_PER_SESSION           = int(  os.environ.get("MAX_EVENTS_PER_SESSION", "500"))
+PING_DTM_INTERVAL_SECONDS        = float(os.environ.get("PING_DTM_INTERVAL_SECONDS", "10"))
+INTERACTION_PROBABILITY_PER_PAGE = float(os.environ.get("INTERACTION_PROBABILITY_PER_PAGE", "0.30"))
+
+NEXT_PAGE_WEIGHTS = {
+    "home":     [("listing", 0.7), ("detail",   0.3)],
+    "listing":  [("detail",  0.9), ("home",     0.1)],
+    "detail":   [("cart",    0.4), ("detail",   0.4), ("listing", 0.2)],
+    "cart":     [("checkout",0.5), ("detail",   0.5)],
+    "checkout": [],
+}
+
+
+def _next_page(current):
+    opts = NEXT_PAGE_WEIGHTS[current]
+    if not opts:
+        return None
+    names, weights = zip(*opts)
+    return random.choices(names, weights=weights, k=1)[0]
+
+
+def _page_event_ctx(page_key, current_detail):
+    """Pick an event dict for pages that need one (detail)."""
+    if page_key == "detail":
+        return current_detail or random.choice(EVENTS)
+    return None
+
+
+def _make_interaction(page_key, uid, sid, sidx, pv_id, url, title, dtm_ms):
+    """Pick and emit a page-appropriate interaction event."""
+    if page_key in ("home", "listing"):
+        kind = random.choices(["link_click", "focus_form"], weights=[0.7, 0.3], k=1)[0]
+    elif page_key == "detail":
+        kind = random.choices(["link_click", "focus_form", "change_form"], weights=[0.7, 0.2, 0.1], k=1)[0]
+    elif page_key == "cart":
+        kind = random.choices(["link_click", "change_form"], weights=[0.6, 0.4], k=1)[0]
+    else:  # checkout
+        kind = random.choices(["link_click", "focus_form", "change_form", "submit_form"],
+                              weights=[0.2, 0.3, 0.3, 0.2], k=1)[0]
+    if kind == "link_click":
+        return link_click(uid, sid, sidx, pv_id,
+                          target_url=url + "#cta", element_id="cta-" + page_key, dtm_ms=dtm_ms)
+    if kind == "focus_form":
+        return focus_form(uid, sid, sidx, pv_id,
+                          form_id=page_key, element_id=f"{page_key}-input", dtm_ms=dtm_ms)
+    if kind == "change_form":
+        return change_form(uid, sid, sidx, pv_id,
+                           form_id=page_key, element_id=f"{page_key}-qty",
+                           new_value=str(random.randint(1, 5)),
+                           node_name="INPUT", type_="number", dtm_ms=dtm_ms)
+    return submit_form(uid, sid, sidx, pv_id,
+                       form_id=page_key,
+                       elements=[{"name": "email",
+                                  "value": f"u{random.randint(1,9999)}@example.com",
+                                  "nodeName": "INPUT", "type": "email"}],
+                       dtm_ms=dtm_ms)
+
 USERS: "OrderedDict[str, int]" = OrderedDict()
 USERS_LOCK = asyncio.Lock()
 
@@ -377,9 +436,13 @@ async def send_events_async(client, endpoint, events_batch):
     return resp.status_code
 
 
-async def simulate_session_async(client, endpoint, think_min=0.3, think_max=1.5):
-    """Same narrative as simulate_session, but fires each event as its own HTTP
-    request with think-time in between (more realistic than a single batch)."""
+async def simulate_session_async(client, endpoint, think_min=0.01, think_max=0.05):
+    """Realistic session: persistent user, geometric page depth, engaged pings,
+    occasional interactions. Pings are emitted in rapid succession with backdated
+    dtm so derived_tstamp = collector_tstamp - (stm - dtm) produces the 10s spacing
+    dbt-snowplow-web expects. Think times between HTTP posts are small (10-50 ms)
+    so one session takes ~100 ms wall-clock regardless of how many pings it emits.
+    """
 
     async def post_one(ev):
         return await send_events_async(client, endpoint, [ev])
@@ -387,50 +450,68 @@ async def simulate_session_async(client, endpoint, think_min=0.3, think_max=1.5)
     async def think():
         await asyncio.sleep(random.uniform(think_min, think_max))
 
-    domain_userid = str(uuid.uuid4())
-    session_id = str(uuid.uuid4())
-    session_idx = 1
-    count = 0
+    uid, sidx = await get_or_create_user()
+    sid = str(uuid.uuid4())
+    events = 0
+    is_bounce = random.random() < BOUNCE_PROBABILITY
 
-    ev, home_pv = page_view_with_id(domain_userid, session_id, session_idx, "home")
-    await post_one(ev); count += 1; await think()
+    current = "home"
+    current_detail = None  # carries a chosen event across detail pages for URL consistency
 
-    ev, listing_pv = page_view_with_id(domain_userid, session_id, session_idx, "listing")
-    await post_one(ev); count += 1; await think()
+    while events < MAX_EVENTS_PER_SESSION:
+        # Decide engagement length for this page
+        n_pings = 0 if is_bounce else min(30, int(random.expovariate(1.0 / 3.0)))
+        page_duration_ms = int((n_pings + 1) * PING_DTM_INTERVAL_SECONDS * 1000) if n_pings else 0
 
-    if random.random() < 0.6:
-        await post_one(struct_event(domain_userid, session_id, session_idx, "search", "submit",
-                                    random.choice(SEARCH_TERMS), page_view_id=listing_pv))
-        count += 1; await think()
+        now_ms = int(time.time() * 1000)
+        pv_dtm = now_ms - page_duration_ms
 
-    if random.random() < 0.4:
-        await post_one(struct_event(domain_userid, session_id, session_idx, "filter", "apply",
-                                    random.choice(CATEGORIES), page_view_id=listing_pv))
-        count += 1; await think()
+        event_ctx = _page_event_ctx(current, current_detail)
+        if current == "detail":
+            current_detail = event_ctx  # remember for potential next-detail browsing
 
-    chosen_event = random.choice(EVENTS)
-    ev, detail_pv = page_view_with_id(domain_userid, session_id, session_idx, "detail", chosen_event)
-    await post_one(ev); count += 1; await think()
+        pv, pv_id = page_view_with_id(uid, sid, sidx, current, event=event_ctx, dtm_ms=pv_dtm)
+        await post_one(pv); events += 1; await think()
+        if events >= MAX_EVENTS_PER_SESSION:
+            break
 
-    if random.random() < 0.7:
-        qty = random.randint(1, 4)
-        total = chosen_event["price"] * qty
-        await post_one(struct_event(domain_userid, session_id, session_idx, "cart", "add_to_cart",
-                                    chosen_event["name"], total, page_view_id=detail_pv))
-        count += 1; await think()
+        # Engaged pings
+        for i in range(1, n_pings + 1):
+            ping_dtm = pv_dtm + int(i * PING_DTM_INTERVAL_SECONDS * 1000)
+            # Simple progressive scroll simulation
+            y_max = min(4000, int(200 * i + random.randint(0, 200)))
+            ping = page_ping(uid, sid, sidx, pv_id,
+                             url=pv["url"], title=pv["page"],
+                             pp_xoff=(0, 0),
+                             pp_yoff=(0, y_max),
+                             dtm_ms=ping_dtm)
+            await post_one(ping); events += 1; await think()
+            if events >= MAX_EVENTS_PER_SESSION:
+                break
+        if events >= MAX_EVENTS_PER_SESSION:
+            break
 
-        ev, cart_pv = page_view_with_id(domain_userid, session_id, session_idx, "cart")
-        await post_one(ev); count += 1; await think()
+        # Optional interaction event
+        if not is_bounce and random.random() < INTERACTION_PROBABILITY_PER_PAGE:
+            interaction_dtm = pv_dtm + random.randint(0, max(1, page_duration_ms))
+            ev = _make_interaction(current, uid, sid, sidx, pv_id,
+                                    url=pv["url"], title=pv["page"],
+                                    dtm_ms=interaction_dtm)
+            await post_one(ev); events += 1; await think()
+            if events >= MAX_EVENTS_PER_SESSION:
+                break
 
-        if random.random() < 0.6:
-            order_id = "HE-" + uuid.uuid4().hex[:8].upper()
-            ev, checkout_pv = page_view_with_id(domain_userid, session_id, session_idx, "checkout")
-            await post_one(ev); count += 1
-            await post_one(struct_event(domain_userid, session_id, session_idx, "ecommerce", "purchase",
-                                        order_id, total, page_view_id=checkout_pv))
-            count += 1; await think()
+        # Bounce exits after one page; otherwise decide to continue
+        if is_bounce:
+            break
+        if random.random() >= CONTINUE_PAGE_PROBABILITY:
+            break
+        nxt = _next_page(current)
+        if nxt is None:
+            break
+        current = nxt
 
-    return count
+    return events
 
 
 async def run_continuous(endpoint, sessions_per_min, concurrency):

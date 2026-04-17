@@ -255,3 +255,90 @@ async def test_get_or_create_user_evicts_oldest_at_cap(monkeypatch):
     for _ in range(5):
         await simulate.get_or_create_user(new_prob=1.0)
     assert len(simulate.USERS) == 3
+
+
+import httpx as _httpx
+
+
+def _collect_calls():
+    """Return (transport, calls) where calls is a list of sent JSON payloads."""
+    calls = []
+
+    def handler(request):
+        calls.append(request.read())
+        return _httpx.Response(200)
+
+    return _httpx.MockTransport(handler), calls
+
+
+@pytest.mark.asyncio
+async def test_simulate_session_async_respects_max_events(monkeypatch):
+    """Hard cap stays enforced even under pathological ping draws."""
+    monkeypatch.setattr(simulate, "MAX_EVENTS_PER_SESSION", 5)
+    monkeypatch.setattr(simulate, "BOUNCE_PROBABILITY", 0.0)
+    monkeypatch.setattr(simulate, "INTERACTION_PROBABILITY_PER_PAGE", 0.0)
+    # Force very-long engagement and always-continue to drive events upward
+    monkeypatch.setattr(simulate, "CONTINUE_PAGE_PROBABILITY", 1.0)
+    monkeypatch.setattr(simulate.random, "expovariate", lambda lam: 30.0)
+
+    transport, calls = _collect_calls()
+    async with _httpx.AsyncClient(transport=transport) as client:
+        events = await simulate.simulate_session_async(client, "http://collector")
+    assert events <= 5
+    assert len(calls) == events
+
+
+@pytest.mark.asyncio
+async def test_simulate_session_async_bounce_is_single_event(monkeypatch):
+    monkeypatch.setattr(simulate, "BOUNCE_PROBABILITY", 1.0)
+    transport, calls = _collect_calls()
+    async with _httpx.AsyncClient(transport=transport) as client:
+        events = await simulate.simulate_session_async(client, "http://collector")
+    assert events == 1  # one page_view, no pings, no interactions, no continuation
+    decoded = json.loads(calls[0])
+    assert decoded["data"][0]["e"] == "pv"
+
+
+@pytest.mark.asyncio
+async def test_simulate_session_async_pings_carry_parent_pv_id(monkeypatch):
+    """All pings on a page share the parent page_view's web_page context id."""
+    monkeypatch.setattr(simulate, "BOUNCE_PROBABILITY", 0.0)
+    monkeypatch.setattr(simulate, "CONTINUE_PAGE_PROBABILITY", 0.0)   # single page session
+    monkeypatch.setattr(simulate, "INTERACTION_PROBABILITY_PER_PAGE", 0.0)
+    monkeypatch.setattr(simulate.random, "expovariate", lambda lam: 3.0)  # 3 pings
+
+    transport, calls = _collect_calls()
+    async with _httpx.AsyncClient(transport=transport) as client:
+        await simulate.simulate_session_async(client, "http://collector")
+
+    events = [json.loads(c)["data"][0] for c in calls]
+    pvs = [e for e in events if e["e"] == "pv"]
+    pps = [e for e in events if e["e"] == "pp"]
+    assert len(pvs) == 1 and len(pps) == 3
+    pv_id = decode_cx(pvs[0]["cx"])["data"][0]["data"]["id"]
+    for pp in pps:
+        assert decode_cx(pp["cx"])["data"][0]["data"]["id"] == pv_id
+
+
+@pytest.mark.asyncio
+async def test_simulate_session_async_ping_dtms_are_spaced(monkeypatch):
+    """Ping dtm values are 10s-spaced (in the past) relative to the page view's dtm."""
+    monkeypatch.setattr(simulate, "BOUNCE_PROBABILITY", 0.0)
+    monkeypatch.setattr(simulate, "CONTINUE_PAGE_PROBABILITY", 0.0)
+    monkeypatch.setattr(simulate, "INTERACTION_PROBABILITY_PER_PAGE", 0.0)
+    monkeypatch.setattr(simulate, "PING_DTM_INTERVAL_SECONDS", 10.0)
+    monkeypatch.setattr(simulate.random, "expovariate", lambda lam: 3.0)
+
+    transport, calls = _collect_calls()
+    async with _httpx.AsyncClient(transport=transport) as client:
+        await simulate.simulate_session_async(client, "http://collector")
+
+    events = [json.loads(c)["data"][0] for c in calls]
+    pv = next(e for e in events if e["e"] == "pv")
+    pps = [e for e in events if e["e"] == "pp"]
+    assert len(pps) == 3
+    dt_pv = int(pv["dtm"])
+    dt_pps = sorted(int(e["dtm"]) for e in pps)
+    assert dt_pps[0] - dt_pv == 10_000
+    assert dt_pps[1] - dt_pv == 20_000
+    assert dt_pps[2] - dt_pv == 30_000
