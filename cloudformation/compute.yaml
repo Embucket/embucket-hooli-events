@@ -245,8 +245,8 @@ Resources:
       Family: hooli-loader
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
-      Cpu: "1024"
-      Memory: "2048"
+      Cpu: "2048"
+      Memory: "4096"
       ExecutionRoleArn: !ImportValue hooli-events-EcsExecutionRoleArn
       TaskRoleArn: !ImportValue hooli-events-LoaderTaskRoleArn
       ContainerDefinitions:
@@ -259,9 +259,9 @@ Resources:
             - Name: COLLECTOR_ENDPOINT
               Value: !Sub "http://${Alb.DNSName}"
             - Name: SESSIONS_PER_MIN
-              Value: "60"
+              Value: "5000"
             - Name: CONCURRENCY
-              Value: "20"
+              Value: "500"
           LogConfiguration:
             LogDriver: awslogs
             Options:
