@@ -52,3 +52,46 @@ def test_struct_event_reuses_given_page_view_id():
     )
     decoded = decode_cx(ev["cx"])
     assert decoded["data"][0]["data"]["id"] == pv_id
+
+
+import asyncio
+import pytest
+
+from simulate import RateRegulator
+
+
+@pytest.mark.asyncio
+async def test_rate_regulator_enforces_concurrency():
+    """With sessions_per_min effectively infinite, concurrency caps active slots."""
+    reg = RateRegulator(sessions_per_min=6000, concurrency=2)
+    await reg.start()
+    slot_a = await reg.acquire()
+    slot_b = await reg.acquire()
+
+    # Third acquire must not complete while two slots are held.
+    third = asyncio.create_task(reg.acquire())
+    done, _ = await asyncio.wait({third}, timeout=0.1)
+    assert not done
+    reg.release(slot_a)
+    slot_c = await asyncio.wait_for(third, timeout=0.2)
+    reg.release(slot_b)
+    reg.release(slot_c)
+    await reg.stop()
+
+
+@pytest.mark.asyncio
+async def test_rate_regulator_respects_sessions_per_min():
+    """Interval between permits matches 60 / sessions_per_min (within jitter)."""
+    reg = RateRegulator(sessions_per_min=600, concurrency=10)  # 10/sec -> 0.1s interval
+    await reg.start()
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    slots = []
+    for _ in range(5):
+        slots.append(await reg.acquire())
+    elapsed = loop.time() - t0
+    # 5 permits at 10/sec ≈ 0.4 s minimum (first permit is immediate).
+    assert 0.3 <= elapsed <= 0.8, elapsed
+    for s in slots:
+        reg.release(s)
+    await reg.stop()

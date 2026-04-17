@@ -10,13 +10,21 @@ Usage:
 """
 
 import argparse
+import asyncio
 import base64
 import json
+import os
 import random
+import signal
 import time
 import uuid
 
 import requests
+
+try:
+    import httpx
+except ImportError:  # pragma: no cover - only hit if running one-shot without httpx installed
+    httpx = None
 
 TRACKER_VERSION = "py-sim-0.1.0"
 TRACKER_NAMESPACE = "hooli-sim"
@@ -137,6 +145,57 @@ def send_events(endpoint, events_batch):
     return resp.status_code
 
 
+class RateRegulator:
+    """Paces session spawns at sessions_per_min, capped at `concurrency` active slots.
+
+    A single producer task adds a permit to `permits` every `60/R` seconds,
+    blocking on `asyncio.Queue.put` once `concurrency` permits are outstanding.
+    Workers `await acquire()` before starting a session and `release()` when done.
+    """
+
+    def __init__(self, sessions_per_min, concurrency):
+        if sessions_per_min <= 0:
+            raise ValueError("sessions_per_min must be > 0")
+        if concurrency <= 0:
+            raise ValueError("concurrency must be > 0")
+        self.interval = 60.0 / sessions_per_min
+        self.concurrency = concurrency
+        self.permits = asyncio.Queue(maxsize=concurrency)
+        self.free = asyncio.Queue(maxsize=concurrency)
+        self._producer = None
+        self._stop = asyncio.Event()
+
+    async def start(self):
+        for i in range(self.concurrency):
+            self.free.put_nowait(i)
+        self._producer = asyncio.create_task(self._run())
+
+    async def _run(self):
+        while not self._stop.is_set():
+            slot = await self.free.get()
+            await self.permits.put(slot)
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=self.interval)
+                return
+            except asyncio.TimeoutError:
+                pass
+
+    async def acquire(self):
+        return await self.permits.get()
+
+    def release(self, slot):
+        self.free.put_nowait(slot)
+
+    async def stop(self):
+        self._stop.set()
+        if self._producer is not None:
+            self._producer.cancel()
+            try:
+                await self._producer
+            except asyncio.CancelledError:
+                pass
+
+
 def simulate_session(endpoint, delay):
     domain_userid = str(uuid.uuid4())
     session_id = str(uuid.uuid4())
@@ -196,22 +255,148 @@ def simulate_session(endpoint, delay):
     return len(events), status
 
 
+async def send_events_async(client, endpoint, events_batch):
+    payload = {
+        "schema": "iglu:com.snowplowanalytics.snowplow/payload_data/jsonschema/1-0-4",
+        "data": events_batch,
+    }
+    url = endpoint.rstrip("/") + COLLECTOR_PATH
+    resp = await client.post(url, json=payload, timeout=10)
+    return resp.status_code
+
+
+async def simulate_session_async(client, endpoint, think_min=0.3, think_max=1.5):
+    """Same narrative as simulate_session, but fires each event as its own HTTP
+    request with think-time in between (more realistic than a single batch)."""
+
+    async def post_one(ev):
+        return await send_events_async(client, endpoint, [ev])
+
+    async def think():
+        await asyncio.sleep(random.uniform(think_min, think_max))
+
+    domain_userid = str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
+    session_idx = 1
+    count = 0
+
+    ev, home_pv = page_view_with_id(domain_userid, session_id, session_idx, "home")
+    await post_one(ev); count += 1; await think()
+
+    ev, listing_pv = page_view_with_id(domain_userid, session_id, session_idx, "listing")
+    await post_one(ev); count += 1; await think()
+
+    if random.random() < 0.6:
+        await post_one(struct_event(domain_userid, session_id, session_idx, "search", "submit",
+                                    random.choice(SEARCH_TERMS), page_view_id=listing_pv))
+        count += 1; await think()
+
+    if random.random() < 0.4:
+        await post_one(struct_event(domain_userid, session_id, session_idx, "filter", "apply",
+                                    random.choice(CATEGORIES), page_view_id=listing_pv))
+        count += 1; await think()
+
+    chosen_event = random.choice(EVENTS)
+    ev, detail_pv = page_view_with_id(domain_userid, session_id, session_idx, "detail", chosen_event)
+    await post_one(ev); count += 1; await think()
+
+    if random.random() < 0.7:
+        qty = random.randint(1, 4)
+        total = chosen_event["price"] * qty
+        await post_one(struct_event(domain_userid, session_id, session_idx, "cart", "add_to_cart",
+                                    chosen_event["name"], total, page_view_id=detail_pv))
+        count += 1; await think()
+
+        ev, cart_pv = page_view_with_id(domain_userid, session_id, session_idx, "cart")
+        await post_one(ev); count += 1; await think()
+
+        if random.random() < 0.6:
+            order_id = "HE-" + uuid.uuid4().hex[:8].upper()
+            ev, checkout_pv = page_view_with_id(domain_userid, session_id, session_idx, "checkout")
+            await post_one(ev); count += 1
+            await post_one(struct_event(domain_userid, session_id, session_idx, "ecommerce", "purchase",
+                                        order_id, total, page_view_id=checkout_pv))
+            count += 1; await think()
+
+    return count
+
+
+async def run_continuous(endpoint, sessions_per_min, concurrency):
+    """Long-running driver: spawn sessions at the given rate, cap at `concurrency`
+    in-flight. Exits cleanly on SIGTERM/SIGINT."""
+    if httpx is None:
+        raise RuntimeError("httpx is required for continuous mode; pip install httpx")
+
+    reg = RateRegulator(sessions_per_min=sessions_per_min, concurrency=concurrency)
+    await reg.start()
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+
+    totals = {"sessions": 0, "events": 0}
+    async with httpx.AsyncClient() as client:
+        tasks = set()
+
+        async def run_one(slot):
+            try:
+                totals["events"] += await simulate_session_async(client, endpoint)
+                totals["sessions"] += 1
+            finally:
+                reg.release(slot)
+
+        while not stop.is_set():
+            try:
+                slot = await asyncio.wait_for(reg.acquire(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+            t = asyncio.create_task(run_one(slot))
+            tasks.add(t)
+            t.add_done_callback(tasks.discard)
+            if totals["sessions"] and totals["sessions"] % 20 == 0:
+                print(f"  [continuous] sessions={totals['sessions']} events={totals['events']}", flush=True)
+
+        await reg.stop()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    print(f"Stopped. Total sessions={totals['sessions']} events={totals['events']}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Snowplow event simulator for Hooli Events")
-    parser.add_argument("--endpoint", required=True, help="Collector URL (e.g. http://ALB_DNS)")
-    parser.add_argument("--sessions", type=int, default=50, help="Number of sessions to simulate")
-    parser.add_argument("--delay", type=float, default=0.1, help="Delay between events in seconds")
+    parser.add_argument("--endpoint", default=os.environ.get("COLLECTOR_ENDPOINT"),
+                        help="Collector URL (e.g. http://ALB_DNS). Env: COLLECTOR_ENDPOINT")
+    parser.add_argument("--sessions", type=int, default=None,
+                        help="One-shot mode: number of sessions to simulate then exit")
+    parser.add_argument("--delay", type=float, default=0.1,
+                        help="One-shot mode: delay between events in seconds")
+    parser.add_argument("--sessions-per-min", type=float,
+                        default=float(os.environ.get("SESSIONS_PER_MIN", "60")),
+                        help="Continuous mode: target sessions per minute. Env: SESSIONS_PER_MIN")
+    parser.add_argument("--concurrency", type=int,
+                        default=int(os.environ.get("CONCURRENCY", "20")),
+                        help="Continuous mode: max in-flight sessions. Env: CONCURRENCY")
     args = parser.parse_args()
 
-    print(f"Simulating {args.sessions} sessions against {args.endpoint}")
-    total_events = 0
+    if not args.endpoint:
+        parser.error("--endpoint (or COLLECTOR_ENDPOINT env var) is required")
 
-    for i in range(args.sessions):
-        count, status = simulate_session(args.endpoint, args.delay)
-        total_events += count
-        print(f"  Session {i+1}/{args.sessions}: {count} events, HTTP {status}")
+    if args.sessions is not None:
+        # One-shot mode
+        print(f"Simulating {args.sessions} sessions against {args.endpoint}")
+        total_events = 0
+        for i in range(args.sessions):
+            count, status = simulate_session(args.endpoint, args.delay)
+            total_events += count
+            print(f"  Session {i+1}/{args.sessions}: {count} events, HTTP {status}")
+        print(f"Done. Sent {total_events} total events across {args.sessions} sessions.")
+        return
 
-    print(f"Done. Sent {total_events} total events across {args.sessions} sessions.")
+    # Continuous mode (default when --sessions is absent)
+    print(f"Continuous mode: target {args.sessions_per_min} sessions/min, "
+          f"concurrency={args.concurrency}, endpoint={args.endpoint}")
+    asyncio.run(run_continuous(args.endpoint, args.sessions_per_min, args.concurrency))
 
 
 if __name__ == "__main__":
