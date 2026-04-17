@@ -341,7 +341,11 @@ async def run_continuous(endpoint, sessions_per_min, concurrency):
         async def run_one(slot):
             try:
                 try:
-                    totals["events"] += await simulate_session_async(client, endpoint)
+                    # Stash the awaited result in a local first: `x += await ...` reads x
+                    # BEFORE the await yields, so concurrent completions race on the
+                    # read-modify-write and drop events from the counter.
+                    session_events = await simulate_session_async(client, endpoint)
+                    totals["events"] += session_events
                     totals["sessions"] += 1
                     if totals["sessions"] % 20 == 0:
                         print(f"  [continuous] sessions={totals['sessions']} events={totals['events']} errors={totals.get('errors', 0)}", flush=True)
