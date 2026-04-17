@@ -259,7 +259,7 @@ Resources:
             - Name: COLLECTOR_ENDPOINT
               Value: !Sub "http://${Alb.DNSName}"
             - Name: SESSIONS_PER_MIN
-              Value: "5000"
+              Value: "5500"
             - Name: CONCURRENCY
               Value: "500"
           LogConfiguration:
