@@ -340,8 +340,16 @@ async def run_continuous(endpoint, sessions_per_min, concurrency):
 
         async def run_one(slot):
             try:
-                totals["events"] += await simulate_session_async(client, endpoint)
-                totals["sessions"] += 1
+                try:
+                    totals["events"] += await simulate_session_async(client, endpoint)
+                    totals["sessions"] += 1
+                    if totals["sessions"] % 20 == 0:
+                        print(f"  [continuous] sessions={totals['sessions']} events={totals['events']} errors={totals.get('errors', 0)}", flush=True)
+                except Exception as e:
+                    totals["errors"] = totals.get("errors", 0) + 1
+                    # Sample-log every 20th error so transient spikes don't spam CloudWatch.
+                    if totals["errors"] % 20 == 1:
+                        print(f"  [continuous] session error ({type(e).__name__}): {e}", flush=True)
             finally:
                 reg.release(slot)
 
@@ -353,14 +361,12 @@ async def run_continuous(endpoint, sessions_per_min, concurrency):
             t = asyncio.create_task(run_one(slot))
             tasks.add(t)
             t.add_done_callback(tasks.discard)
-            if totals["sessions"] and totals["sessions"] % 20 == 0:
-                print(f"  [continuous] sessions={totals['sessions']} events={totals['events']}", flush=True)
 
         await reg.stop()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    print(f"Stopped. Total sessions={totals['sessions']} events={totals['events']}")
+    print(f"Stopped. Total sessions={totals['sessions']} events={totals['events']} errors={totals.get('errors', 0)}")
 
 
 def main():
