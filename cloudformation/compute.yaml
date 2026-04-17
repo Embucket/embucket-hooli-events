@@ -140,8 +140,8 @@ Resources:
       Family: hooli-enrich
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
-      Cpu: "512"
-      Memory: "1024"
+      Cpu: "2048"
+      Memory: "4096"
       ExecutionRoleArn: !ImportValue hooli-events-EcsExecutionRoleArn
       TaskRoleArn: !ImportValue hooli-events-EnrichTaskRoleArn
       ContainerDefinitions:
@@ -159,7 +159,7 @@ Resources:
             - Name: ACCEPT_LIMITED_USE_LICENSE
               Value: "yes"
             - Name: JAVA_OPTS
-              Value: "-Xmx768m"
+              Value: "-Xmx3500m"
             - Name: AWS_REGION
               Value: us-east-2
             - Name: AWS_DEFAULT_REGION
