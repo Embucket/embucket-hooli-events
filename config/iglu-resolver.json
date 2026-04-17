@@ -6,7 +6,7 @@
       {
         "name": "Iglu Central",
         "priority": 0,
-        "vendorPrefixes": ["com.snowplowanalytics"],
+        "vendorPrefixes": ["com.snowplowanalytics", "nl.basjes"],
         "connection": {
           "http": {
             "uri": "http://iglucentral.com"
@@ -16,7 +16,7 @@
       {
         "name": "Iglu Central - Mirror",
         "priority": 1,
-        "vendorPrefixes": ["com.snowplowanalytics"],
+        "vendorPrefixes": ["com.snowplowanalytics", "nl.basjes"],
         "connection": {
           "http": {
             "uri": "http://mirror01.iglucentral.com"

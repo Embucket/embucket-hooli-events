@@ -65,6 +65,13 @@ Resources:
       ImageScanningConfiguration:
         ScanOnPush: false
 
+  LoaderRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: hooli-events/loader
+      ImageScanningConfiguration:
+        ScanOnPush: false
+
   EcsExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -308,6 +315,28 @@ Resources:
                   - kinesis:ListStreams
                 Resource: "*"
 
+  LoaderTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: hooli-events-loader
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: logs-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
 Outputs:
   CollectorRepoUri:
     Value: !GetAtt CollectorRepo.RepositoryUri
@@ -349,3 +378,11 @@ Outputs:
     Value: !GetAtt EventGeneratorTaskRole.Arn
     Export:
       Name: hooli-events-EventGeneratorTaskRoleArn
+  LoaderRepoUri:
+    Value: !GetAtt LoaderRepo.RepositoryUri
+    Export:
+      Name: hooli-events-LoaderRepoUri
+  LoaderTaskRoleArn:
+    Value: !GetAtt LoaderTaskRole.Arn
+    Export:
+      Name: hooli-events-LoaderTaskRoleArn

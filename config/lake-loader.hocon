@@ -20,7 +20,7 @@
       "type": "Iceberg"
       "location": ${ICEBERG_LOCATION}
       "database": "analytics_glue"
-      "table": "enriched_events"
+      "table": "hooli_events_0417_v2"
       "icebergTableProperties": {
         "write.metadata.compression-codec": "none"
       }
