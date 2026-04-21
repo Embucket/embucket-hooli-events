@@ -166,6 +166,27 @@ def web_page_context(page_view_id):
 
 COLOR_DEPTHS = ["24", "30", "32"]
 
+# External referrers — what brought the user to hooli-events.com originally.
+# 30% direct (no referrer), the rest mostly search + social, mirroring real
+# traffic mixes so refr_medium and refr_source populate plausibly.
+EXTERNAL_REFERRERS = [
+    ("", 0.30),
+    ("https://www.google.com/", 0.40),
+    ("https://www.bing.com/", 0.04),
+    ("https://duckduckgo.com/", 0.02),
+    ("https://www.reddit.com/", 0.04),
+    ("https://twitter.com/", 0.06),
+    ("https://www.facebook.com/", 0.06),
+    ("https://www.linkedin.com/", 0.03),
+    ("https://news.ycombinator.com/", 0.02),
+    ("https://t.co/", 0.03),
+]
+
+
+def pick_external_referrer():
+    urls, weights = zip(*EXTERNAL_REFERRERS)
+    return random.choices(urls, weights=weights, k=1)[0]
+
 # Sample of public-internet /8 and /16 blocks spread across geographies. Each
 # session picks a random address from one of these ranges so the MaxMind
 # ip_lookups enrichment returns varied countries/cities instead of every event
@@ -514,7 +535,9 @@ async def simulate_session_async(client, endpoint, think_min=0.01, think_max=0.0
     events = 0
     is_bounce = random.random() < BOUNCE_PROBABILITY
     browser = session_browser_params()             # consistent across the session
-    previous_page_url = ""                          # no referrer on the first (home) page_view
+    # Referrer for the FIRST page's events — external (google.com etc.) or empty
+    # if direct. For subsequent pages we swap to the previously-visited URL.
+    current_refr = pick_external_referrer()
     # Every HTTP POST for this session carries the user's "real" public IP as
     # X-Forwarded-For. The ALB appends its own hop, and the collector takes
     # the first IP — so user_ipaddress is our fake (geographically varied) IP,
@@ -542,17 +565,20 @@ async def simulate_session_async(client, endpoint, think_min=0.01, think_max=0.0
         if current == "detail":
             current_detail = event_ctx  # remember for potential next-detail browsing
 
-        # page_view carries browser params + referrer (previous page within the session)
-        pv_extra = dict(browser)
-        if previous_page_url:
-            pv_extra["refr"] = previous_page_url
+        # Every event on this page carries the session browser params + the
+        # referrer for this page (external on the first page, previous URL
+        # on subsequent pages). Real JS trackers send refr on every hit.
+        page_extra = dict(browser)
+        if current_refr:
+            page_extra["refr"] = current_refr
+
         pv, pv_id = page_view_with_id(uid, sid, sidx, current, event=event_ctx,
-                                      dtm_ms=pv_dtm, extra=pv_extra)
+                                      dtm_ms=pv_dtm, extra=page_extra)
         await post_one(pv); events += 1; await think()
         if events >= MAX_EVENTS_PER_SESSION:
             break
 
-        # Engaged pings (same browser params, no refr — pings aren't navigation events)
+        # Engaged pings (same page_extra — inherits browser + current refr)
         for i in range(1, n_pings + 1):
             ping_dtm = pv_dtm + int(i * PING_DTM_INTERVAL_SECONDS * 1000)
             # Simple progressive scroll simulation
@@ -561,25 +587,25 @@ async def simulate_session_async(client, endpoint, think_min=0.01, think_max=0.0
                              url=pv["url"], title=pv["page"],
                              pp_xoff=(0, 0),
                              pp_yoff=(0, y_max),
-                             dtm_ms=ping_dtm, extra=browser)
+                             dtm_ms=ping_dtm, extra=page_extra)
             await post_one(ping); events += 1; await think()
             if events >= MAX_EVENTS_PER_SESSION:
                 break
         if events >= MAX_EVENTS_PER_SESSION:
             break
 
-        # Optional interaction event (browser params, no refr)
+        # Optional interaction event
         if not is_bounce and random.random() < INTERACTION_PROBABILITY_PER_PAGE:
             interaction_dtm = pv_dtm + random.randint(0, max(1, page_duration_ms))
             ev = _make_interaction(current, uid, sid, sidx, pv_id,
                                     url=pv["url"], title=pv["page"],
-                                    dtm_ms=interaction_dtm, extra=browser)
+                                    dtm_ms=interaction_dtm, extra=page_extra)
             await post_one(ev); events += 1; await think()
             if events >= MAX_EVENTS_PER_SESSION:
                 break
 
         # Before moving to the next page, remember this one as the referrer
-        previous_page_url = pv["url"]
+        current_refr = pv["url"]
 
         # Bounce exits after one page; otherwise decide to continue
         if is_bounce:
