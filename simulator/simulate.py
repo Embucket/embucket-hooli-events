@@ -166,13 +166,44 @@ def web_page_context(page_view_id):
 
 COLOR_DEPTHS = ["24", "30", "32"]
 
+# Sample of public-internet /8 and /16 blocks spread across geographies. Each
+# session picks a random address from one of these ranges so the MaxMind
+# ip_lookups enrichment returns varied countries/cities instead of every event
+# geolocating to the NAT Gateway's EIP (AWS Ohio).
+PUBLIC_IP_BLOCKS = [
+    ("8.8.",    "US"),       # Google
+    ("13.107.", "US"),       # Microsoft
+    ("52.95.",  "US"),       # AWS retail
+    ("94.130.", "DE"),       # Hetzner Germany
+    ("178.128.","DE"),       # DigitalOcean Frankfurt
+    ("195.149.","SE"),       # Sweden
+    ("217.160.","DE"),       # 1&1
+    ("34.102.", "US"),       # GCP
+    ("34.120.", "US"),       # GCP
+    ("52.230.", "NL"),       # Azure Amsterdam
+    ("13.228.", "SG"),       # AWS Singapore
+    ("13.251.", "SG"),       # AWS Singapore
+    ("3.112.",  "JP"),       # AWS Tokyo
+    ("18.130.", "GB"),       # AWS London
+    ("15.221.", "CA"),       # AWS Canada
+    ("3.104.",  "AU"),       # AWS Sydney
+    ("18.228.", "BR"),       # AWS Sao Paulo
+    ("15.161.", "IT"),       # AWS Milan
+]
+
+
+def random_public_ip():
+    prefix, _cc = random.choice(PUBLIC_IP_BLOCKS)
+    return f"{prefix}{random.randint(0, 255)}.{random.randint(1, 254)}"
+
 
 def session_browser_params():
     """Browser/document fields consistent within one session (one user, one device).
 
     Real JS trackers send these on every event; enrich splits vp/ds into
     br_viewwidth/br_viewheight/doc_width/doc_height, and cookie/cd into
-    br_cookies/br_colordepth.
+    br_cookies/br_colordepth. We also assign a public IP here so each
+    session looks like it originated from a real internet address.
     """
     vp = random.choice(RESOLUTIONS)
     vp_w, vp_h = vp.split("x")
@@ -182,6 +213,7 @@ def session_browser_params():
         "cd": random.choice(COLOR_DEPTHS),
         "vp": vp,
         "ds": f"{vp_w}x{doc_h}",
+        "ip": random_public_ip(),
     }
 
 
@@ -459,13 +491,13 @@ def simulate_session(endpoint, delay):
     return len(events), status
 
 
-async def send_events_async(client, endpoint, events_batch):
+async def send_events_async(client, endpoint, events_batch, headers=None):
     payload = {
         "schema": "iglu:com.snowplowanalytics.snowplow/payload_data/jsonschema/1-0-4",
         "data": events_batch,
     }
     url = endpoint.rstrip("/") + COLLECTOR_PATH
-    resp = await client.post(url, json=payload, timeout=10)
+    resp = await client.post(url, json=payload, timeout=10, headers=headers)
     return resp.status_code
 
 
@@ -477,18 +509,23 @@ async def simulate_session_async(client, endpoint, think_min=0.01, think_max=0.0
     so one session takes ~100 ms wall-clock regardless of how many pings it emits.
     """
 
-    async def post_one(ev):
-        return await send_events_async(client, endpoint, [ev])
-
-    async def think():
-        await asyncio.sleep(random.uniform(think_min, think_max))
-
     uid, sidx = await get_or_create_user()
     sid = str(uuid.uuid4())
     events = 0
     is_bounce = random.random() < BOUNCE_PROBABILITY
     browser = session_browser_params()             # consistent across the session
     previous_page_url = ""                          # no referrer on the first (home) page_view
+    # Every HTTP POST for this session carries the user's "real" public IP as
+    # X-Forwarded-For. The ALB appends its own hop, and the collector takes
+    # the first IP — so user_ipaddress is our fake (geographically varied) IP,
+    # not the NAT Gateway's EIP.
+    session_headers = {"X-Forwarded-For": browser["ip"]}
+
+    async def post_one(ev):
+        return await send_events_async(client, endpoint, [ev], headers=session_headers)
+
+    async def think():
+        await asyncio.sleep(random.uniform(think_min, think_max))
 
     current = "home"
     current_detail = None  # carries a chosen event across detail pages for URL consistency
