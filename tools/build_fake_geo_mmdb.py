@@ -8,7 +8,7 @@ whenever PUBLIC_IP_BLOCKS changes and commit the two .mmdb files.
 
 from pathlib import Path
 
-from mmdb_writer import MMDBWriter
+from mmdb_writer import MMDBWriter, MmdbU32
 from netaddr import IPSet
 
 
@@ -266,6 +266,21 @@ DEFAULT = {
 }
 
 
+def _typed(record):
+    """Force MMDB int typing that matches MaxMind's official DBs.
+
+    MaxMind's Java reader binds fields to strongly-typed Java classes; when
+    autonomous_system_number is serialized as a 16-bit uint it fails to
+    deserialize into IspResponse.autonomousSystemNumber (Java Integer).
+    Wrapping the ASN as MmdbU32 forces a uint32 on the wire.
+    """
+    if "autonomous_system_number" in record:
+        r = dict(record)
+        r["autonomous_system_number"] = MmdbU32(record["autonomous_system_number"])
+        return r
+    return record
+
+
 def write_mmdb(path, lookup_key, database_type, description_en):
     writer = MMDBWriter(ip_version=4, database_type=database_type,
                         description={"en": description_en})
@@ -273,10 +288,10 @@ def write_mmdb(path, lookup_key, database_type, description_en):
     # can't represent a literal /0, and later insert_network calls for the
     # specific BLOCKS override the default's matching bits. Two halves
     # blanket-cover every IPv4 except those we subsequently pin.
-    writer.insert_network(IPSet(["0.0.0.0/1"]), DEFAULT[lookup_key])
-    writer.insert_network(IPSet(["128.0.0.0/1"]), DEFAULT[lookup_key])
+    writer.insert_network(IPSet(["0.0.0.0/1"]), _typed(DEFAULT[lookup_key]))
+    writer.insert_network(IPSet(["128.0.0.0/1"]), _typed(DEFAULT[lookup_key]))
     for cidr, data in BLOCKS.items():
-        writer.insert_network(IPSet([cidr]), data[lookup_key])
+        writer.insert_network(IPSet([cidr]), _typed(data[lookup_key]))
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     writer.to_db_file(str(path))
 
