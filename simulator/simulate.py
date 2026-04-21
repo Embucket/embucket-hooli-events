@@ -92,7 +92,7 @@ def _page_event_ctx(page_key, current_detail):
     return None
 
 
-def _make_interaction(page_key, uid, sid, sidx, pv_id, url, title, dtm_ms):
+def _make_interaction(page_key, uid, sid, sidx, pv_id, url, title, dtm_ms, extra=None):
     """Pick and emit a page-appropriate interaction event."""
     if page_key in ("home", "listing"):
         kind = random.choices(["link_click", "focus_form"], weights=[0.7, 0.3], k=1)[0]
@@ -105,21 +105,24 @@ def _make_interaction(page_key, uid, sid, sidx, pv_id, url, title, dtm_ms):
                               weights=[0.2, 0.3, 0.3, 0.2], k=1)[0]
     if kind == "link_click":
         return link_click(uid, sid, sidx, pv_id,
-                          target_url=url + "#cta", element_id="cta-" + page_key, dtm_ms=dtm_ms)
+                          target_url=url + "#cta", element_id="cta-" + page_key,
+                          dtm_ms=dtm_ms, extra=extra)
     if kind == "focus_form":
         return focus_form(uid, sid, sidx, pv_id,
-                          form_id=page_key, element_id=f"{page_key}-input", dtm_ms=dtm_ms)
+                          form_id=page_key, element_id=f"{page_key}-input",
+                          dtm_ms=dtm_ms, extra=extra)
     if kind == "change_form":
         return change_form(uid, sid, sidx, pv_id,
                            form_id=page_key, element_id=f"{page_key}-qty",
                            new_value=str(random.randint(1, 5)),
-                           node_name="INPUT", type_="number", dtm_ms=dtm_ms)
+                           node_name="INPUT", type_="number",
+                           dtm_ms=dtm_ms, extra=extra)
     return submit_form(uid, sid, sidx, pv_id,
                        form_id=page_key,
                        elements=[{"name": "email",
                                   "value": f"u{random.randint(1,9999)}@example.com",
                                   "nodeName": "INPUT", "type": "email"}],
-                       dtm_ms=dtm_ms)
+                       dtm_ms=dtm_ms, extra=extra)
 
 USERS: "OrderedDict[str, int]" = OrderedDict()
 USERS_LOCK = asyncio.Lock()
@@ -161,11 +164,38 @@ def web_page_context(page_view_id):
     return {"schema": WEB_PAGE_SCHEMA, "data": {"id": page_view_id}}
 
 
-def base_event(domain_userid, session_id, session_idx, dtm_ms=None):
+COLOR_DEPTHS = ["24", "30", "32"]
+
+
+def session_browser_params():
+    """Browser/document fields consistent within one session (one user, one device).
+
+    Real JS trackers send these on every event; enrich splits vp/ds into
+    br_viewwidth/br_viewheight/doc_width/doc_height, and cookie/cd into
+    br_cookies/br_colordepth.
+    """
+    vp = random.choice(RESOLUTIONS)
+    vp_w, vp_h = vp.split("x")
+    doc_h = int(vp_h) * random.randint(1, 3)  # doc taller than viewport
+    return {
+        "cookie": "1",
+        "cd": random.choice(COLOR_DEPTHS),
+        "vp": vp,
+        "ds": f"{vp_w}x{doc_h}",
+    }
+
+
+def base_event(domain_userid, session_id, session_idx, dtm_ms=None, extra=None):
+    """Build a tp2 event dict.
+
+    extra is a mapping of additional tp2 short-name fields (e.g., cookie, cd,
+    vp, ds, refr, ip) merged into the event. Callers pass session-wide fields
+    (browser params) and event-specific fields (refr) through here.
+    """
     now_ms = int(time.time() * 1000)
     if dtm_ms is None:
         dtm_ms = now_ms
-    return {
+    ev = {
         "tv": TRACKER_VERSION,
         "tna": TRACKER_NAMESPACE,
         "aid": APP_ID,
@@ -180,17 +210,20 @@ def base_event(domain_userid, session_id, session_idx, dtm_ms=None):
         "res": random.choice(RESOLUTIONS),
         "cs": "UTF-8",
     }
+    if extra:
+        ev.update(extra)
+    return ev
 
 
 def page_view(domain_userid, session_id, session_idx, page_key,
-              event=None, page_view_id=None, dtm_ms=None):
+              event=None, page_view_id=None, dtm_ms=None, extra=None):
     ev, _ = page_view_with_id(domain_userid, session_id, session_idx, page_key,
-                              event=event, page_view_id=page_view_id, dtm_ms=dtm_ms)
+                              event=event, page_view_id=page_view_id, dtm_ms=dtm_ms, extra=extra)
     return ev
 
 
 def page_view_with_id(domain_userid, session_id, session_idx, page_key,
-                      event=None, page_view_id=None, dtm_ms=None):
+                      event=None, page_view_id=None, dtm_ms=None, extra=None):
     """Like page_view but also returns the generated page_view_id for reuse by later struct events."""
     url_tpl, title_tpl = PAGES[page_key]
     fmt = {}
@@ -202,7 +235,7 @@ def page_view_with_id(domain_userid, session_id, session_idx, page_key,
     if page_view_id is None:
         page_view_id = str(uuid.uuid4())
 
-    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms)
+    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms, extra=extra)
     ev["e"] = "pv"
     ev["url"] = url
     ev["page"] = title
@@ -211,8 +244,8 @@ def page_view_with_id(domain_userid, session_id, session_idx, page_key,
 
 
 def struct_event(domain_userid, session_id, session_idx, category, action,
-                 label="", value=None, page_view_id=None, dtm_ms=None):
-    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms)
+                 label="", value=None, page_view_id=None, dtm_ms=None, extra=None):
+    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms, extra=extra)
     ev["e"] = "se"
     ev["se_ca"] = category
     ev["se_ac"] = action
@@ -226,13 +259,13 @@ def struct_event(domain_userid, session_id, session_idx, category, action,
 
 
 def page_ping(domain_userid, session_id, session_idx, page_view_id,
-              url, title, pp_xoff=(0, 0), pp_yoff=(0, 0), dtm_ms=None):
+              url, title, pp_xoff=(0, 0), pp_yoff=(0, 0), dtm_ms=None, extra=None):
     """Emit a Snowplow page_ping event carrying the parent page_view's web_page context.
 
     pp_xoff and pp_yoff are (min, max) pairs of pixel offsets that real trackers
     record as the scroll extent observed during the ping interval.
     """
-    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms)
+    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms, extra=extra)
     ev["e"] = "pp"
     ev["url"] = url
     ev["page"] = title
@@ -259,8 +292,8 @@ def _encode_ue(ue_schema, ue_data):
 
 
 def unstruct_event(domain_userid, session_id, session_idx,
-                   ue_schema, ue_data, page_view_id=None, dtm_ms=None):
-    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms)
+                   ue_schema, ue_data, page_view_id=None, dtm_ms=None, extra=None):
+    ev = base_event(domain_userid, session_id, session_idx, dtm_ms=dtm_ms, extra=extra)
     ev["e"] = "ue"
     ev["ue_px"] = _encode_ue(ue_schema, ue_data)
     if page_view_id is not None:
@@ -269,41 +302,41 @@ def unstruct_event(domain_userid, session_id, session_idx,
 
 
 def link_click(domain_userid, session_id, session_idx, page_view_id,
-               target_url, element_id="", dtm_ms=None):
+               target_url, element_id="", dtm_ms=None, extra=None):
     return unstruct_event(domain_userid, session_id, session_idx,
                           LINK_CLICK_SCHEMA,
                           {"targetUrl": target_url, "elementId": element_id},
-                          page_view_id=page_view_id, dtm_ms=dtm_ms)
+                          page_view_id=page_view_id, dtm_ms=dtm_ms, extra=extra)
 
 
 def submit_form(domain_userid, session_id, session_idx, page_view_id,
-                form_id, elements=None, dtm_ms=None):
+                form_id, elements=None, dtm_ms=None, extra=None):
     return unstruct_event(domain_userid, session_id, session_idx,
                           SUBMIT_FORM_SCHEMA,
                           {"formId": form_id, "formClasses": [],
                            "elements": elements or []},
-                          page_view_id=page_view_id, dtm_ms=dtm_ms)
+                          page_view_id=page_view_id, dtm_ms=dtm_ms, extra=extra)
 
 
 def focus_form(domain_userid, session_id, session_idx, page_view_id,
-               form_id, element_id, node_name="INPUT", dtm_ms=None):
+               form_id, element_id, node_name="INPUT", dtm_ms=None, extra=None):
     return unstruct_event(domain_userid, session_id, session_idx,
                           FOCUS_FORM_SCHEMA,
                           {"formId": form_id, "elementId": element_id,
                            "nodeName": node_name, "elementClasses": [],
                            "value": None},
-                          page_view_id=page_view_id, dtm_ms=dtm_ms)
+                          page_view_id=page_view_id, dtm_ms=dtm_ms, extra=extra)
 
 
 def change_form(domain_userid, session_id, session_idx, page_view_id,
                 form_id, element_id, new_value,
-                node_name="INPUT", type_="text", dtm_ms=None):
+                node_name="INPUT", type_="text", dtm_ms=None, extra=None):
     return unstruct_event(domain_userid, session_id, session_idx,
                           CHANGE_FORM_SCHEMA,
                           {"formId": form_id, "elementId": element_id,
                            "nodeName": node_name, "type": type_,
                            "elementClasses": [], "value": new_value},
-                          page_view_id=page_view_id, dtm_ms=dtm_ms)
+                          page_view_id=page_view_id, dtm_ms=dtm_ms, extra=extra)
 
 
 def send_events(endpoint, events_batch):
@@ -454,6 +487,8 @@ async def simulate_session_async(client, endpoint, think_min=0.01, think_max=0.0
     sid = str(uuid.uuid4())
     events = 0
     is_bounce = random.random() < BOUNCE_PROBABILITY
+    browser = session_browser_params()             # consistent across the session
+    previous_page_url = ""                          # no referrer on the first (home) page_view
 
     current = "home"
     current_detail = None  # carries a chosen event across detail pages for URL consistency
@@ -470,12 +505,17 @@ async def simulate_session_async(client, endpoint, think_min=0.01, think_max=0.0
         if current == "detail":
             current_detail = event_ctx  # remember for potential next-detail browsing
 
-        pv, pv_id = page_view_with_id(uid, sid, sidx, current, event=event_ctx, dtm_ms=pv_dtm)
+        # page_view carries browser params + referrer (previous page within the session)
+        pv_extra = dict(browser)
+        if previous_page_url:
+            pv_extra["refr"] = previous_page_url
+        pv, pv_id = page_view_with_id(uid, sid, sidx, current, event=event_ctx,
+                                      dtm_ms=pv_dtm, extra=pv_extra)
         await post_one(pv); events += 1; await think()
         if events >= MAX_EVENTS_PER_SESSION:
             break
 
-        # Engaged pings
+        # Engaged pings (same browser params, no refr — pings aren't navigation events)
         for i in range(1, n_pings + 1):
             ping_dtm = pv_dtm + int(i * PING_DTM_INTERVAL_SECONDS * 1000)
             # Simple progressive scroll simulation
@@ -484,22 +524,25 @@ async def simulate_session_async(client, endpoint, think_min=0.01, think_max=0.0
                              url=pv["url"], title=pv["page"],
                              pp_xoff=(0, 0),
                              pp_yoff=(0, y_max),
-                             dtm_ms=ping_dtm)
+                             dtm_ms=ping_dtm, extra=browser)
             await post_one(ping); events += 1; await think()
             if events >= MAX_EVENTS_PER_SESSION:
                 break
         if events >= MAX_EVENTS_PER_SESSION:
             break
 
-        # Optional interaction event
+        # Optional interaction event (browser params, no refr)
         if not is_bounce and random.random() < INTERACTION_PROBABILITY_PER_PAGE:
             interaction_dtm = pv_dtm + random.randint(0, max(1, page_duration_ms))
             ev = _make_interaction(current, uid, sid, sidx, pv_id,
                                     url=pv["url"], title=pv["page"],
-                                    dtm_ms=interaction_dtm)
+                                    dtm_ms=interaction_dtm, extra=browser)
             await post_one(ev); events += 1; await think()
             if events >= MAX_EVENTS_PER_SESSION:
                 break
+
+        # Before moving to the next page, remember this one as the referrer
+        previous_page_url = pv["url"]
 
         # Bounce exits after one page; otherwise decide to continue
         if is_bounce:
