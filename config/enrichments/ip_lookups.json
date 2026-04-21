@@ -8,6 +8,10 @@
       "geo": {
         "database": "GeoLite2-City.mmdb",
         "uri": "file:///snowplow/config/maxmind"
+      },
+      "isp": {
+        "database": "GeoIP2-ISP.mmdb",
+        "uri": "file:///snowplow/config/maxmind"
       }
     }
   }
