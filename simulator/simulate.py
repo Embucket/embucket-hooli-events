@@ -17,6 +17,7 @@ import os
 import random
 import signal
 import time
+import urllib.parse
 import uuid
 
 import requests
@@ -187,6 +188,34 @@ def pick_external_referrer():
     urls, weights = zip(*EXTERNAL_REFERRERS)
     return random.choices(urls, weights=weights, k=1)[0]
 
+
+# Roughly 15% of sessions land with UTM / click-id params on their first page,
+# matching the ~17% mkt_* fill rate in the Snowplow public Web-Analytics
+# reference sample. Split across realistic sources (google_cpc biggest, fb
+# social, email newsletter, small share of organic socials) plus a couple of
+# raw click-id landers that populate mkt_clickid.
+CAMPAIGN_PARAMS = [
+    ({}, 0.85),  # no campaign — the majority of sessions
+    ({"utm_source": "google",     "utm_medium": "cpc",
+      "utm_campaign": "summer-events"}, 0.06),
+    ({"utm_source": "google",     "utm_medium": "cpc",
+      "utm_campaign": "brand",    "gclid": "Cj0KCQjw"}, 0.03),
+    ({"utm_source": "facebook",   "utm_medium": "social",
+      "utm_campaign": "festival-promo", "fbclid": "IwAR"}, 0.02),
+    ({"utm_source": "newsletter", "utm_medium": "email",
+      "utm_campaign": "weekly-picks"}, 0.02),
+    ({"utm_source": "twitter",    "utm_medium": "social",
+      "utm_campaign": "launch"}, 0.01),
+    ({"utm_source": "linkedin",   "utm_medium": "social",
+      "utm_campaign": "b2b-outreach"}, 0.01),
+]
+
+
+def pick_campaign_params():
+    """Return a dict of UTM/click params for this session's entry page (or {})."""
+    params, weights = zip(*CAMPAIGN_PARAMS)
+    return dict(random.choices(params, weights=weights, k=1)[0])
+
 # Sample of public-internet /8 and /16 blocks spread across geographies. Each
 # session picks a random address from one of these ranges so the MaxMind
 # ip_lookups enrichment returns varied countries/cities instead of every event
@@ -269,21 +298,33 @@ def base_event(domain_userid, session_id, session_idx, dtm_ms=None, extra=None):
 
 
 def page_view(domain_userid, session_id, session_idx, page_key,
-              event=None, page_view_id=None, dtm_ms=None, extra=None):
+              event=None, page_view_id=None, dtm_ms=None, extra=None, url_query=None):
     ev, _ = page_view_with_id(domain_userid, session_id, session_idx, page_key,
-                              event=event, page_view_id=page_view_id, dtm_ms=dtm_ms, extra=extra)
+                              event=event, page_view_id=page_view_id,
+                              dtm_ms=dtm_ms, extra=extra, url_query=url_query)
     return ev
 
 
 def page_view_with_id(domain_userid, session_id, session_idx, page_key,
-                      event=None, page_view_id=None, dtm_ms=None, extra=None):
-    """Like page_view but also returns the generated page_view_id for reuse by later struct events."""
+                      event=None, page_view_id=None, dtm_ms=None, extra=None,
+                      url_query=None):
+    """Like page_view but also returns the generated page_view_id for reuse by later struct events.
+
+    url_query, when non-empty, is a dict of query params (e.g. UTM / click IDs)
+    appended to the URL for this page view. Used for landing pages so the
+    campaign_attribution enrichment can populate mkt_* fields.
+    """
     url_tpl, title_tpl = PAGES[page_key]
     fmt = {}
     if event:
         fmt = {"id": event["id"], "name": event["name"]}
     url = url_tpl.format(**fmt) if fmt else url_tpl
     title = title_tpl.format(**fmt) if fmt else title_tpl
+
+    if url_query:
+        qs = urllib.parse.urlencode(url_query)
+        sep = "&" if "?" in url else "?"
+        url = url + sep + qs
 
     if page_view_id is None:
         page_view_id = str(uuid.uuid4())
@@ -538,6 +579,11 @@ async def simulate_session_async(client, endpoint, think_min=0.01, think_max=0.0
     # Referrer for the FIRST page's events — external (google.com etc.) or empty
     # if direct. For subsequent pages we swap to the previously-visited URL.
     current_refr = pick_external_referrer()
+    # UTM / click-id params for the landing URL (empty for most sessions).
+    # Attached to the first page_view's URL only — internal navigation drops
+    # them, the same way a real browser does.
+    landing_campaign = pick_campaign_params()
+    is_first_page = True
     # Every HTTP POST for this session carries the user's "real" public IP as
     # X-Forwarded-For. The ALB appends its own hop, and the collector takes
     # the first IP — so user_ipaddress is our fake (geographically varied) IP,
@@ -572,8 +618,11 @@ async def simulate_session_async(client, endpoint, think_min=0.01, think_max=0.0
         if current_refr:
             page_extra["refr"] = current_refr
 
+        pv_url_query = landing_campaign if is_first_page else None
         pv, pv_id = page_view_with_id(uid, sid, sidx, current, event=event_ctx,
-                                      dtm_ms=pv_dtm, extra=page_extra)
+                                      dtm_ms=pv_dtm, extra=page_extra,
+                                      url_query=pv_url_query)
+        is_first_page = False
         await post_one(pv); events += 1; await think()
         if events >= MAX_EVENTS_PER_SESSION:
             break
