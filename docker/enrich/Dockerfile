@@ -9,7 +9,7 @@ ARG DBIP_MONTH=2026-04
 RUN mkdir -p /snowplow/config/maxmind \
   && curl -fsSL -o /tmp/dbip.mmdb.gz \
        "https://download.db-ip.com/free/dbip-city-lite-${DBIP_MONTH}.mmdb.gz" \
-  && gunzip -c /tmp/dbip.mmdb.gz > /snowplow/config/maxmind/dbip-city-lite.mmdb \
+  && gunzip -c /tmp/dbip.mmdb.gz > /snowplow/config/maxmind/GeoLite2-City.mmdb \
   && rm /tmp/dbip.mmdb.gz
 
 COPY enrich.hocon /snowplow/config/enrich.hocon

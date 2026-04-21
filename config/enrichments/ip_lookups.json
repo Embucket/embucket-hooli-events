@@ -6,7 +6,7 @@
     "enabled": true,
     "parameters": {
       "geo": {
-        "database": "dbip-city-lite.mmdb",
+        "database": "GeoLite2-City.mmdb",
         "uri": "file:///snowplow/config/maxmind"
       }
     }
