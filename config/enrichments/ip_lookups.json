@@ -7,11 +7,11 @@
     "parameters": {
       "geo": {
         "database": "GeoLite2-City.mmdb",
-        "uri": "file:///snowplow/config/maxmind"
+        "uri": "s3://hooli-events-iceberg-glue-767397688925/maxmind"
       },
       "isp": {
         "database": "GeoIP2-ISP.mmdb",
-        "uri": "file:///snowplow/config/maxmind"
+        "uri": "s3://hooli-events-iceberg-glue-767397688925/maxmind"
       }
     }
   }
