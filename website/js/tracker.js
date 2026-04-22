@@ -1,5 +1,12 @@
 // Snowplow tracker initialization and event helpers.
-// Set COLLECTOR_ENDPOINT to the ALB DNS name after deployment.
+//
+// NOTE: The collector ALB is now internal-only (Scheme: internal, private
+// subnets) to eliminate the NAT-Bytes hairpin. The DNS below points at the
+// retired public ALB and no longer resolves. This file is kept for reference
+// only — there are no real external web clients; the synthetic Python loader
+// inside the VPC is the sole event source. If an external demo site is ever
+// added back, provision a new public entry point (CloudFront or a second
+// internet-facing ALB fronting the internal one) and update this endpoint.
 var COLLECTOR_ENDPOINT = "http://hooli-events-alb-1641300827.us-east-2.elb.amazonaws.com";
 
 ;(function(p,l,o,w,i,n,g){if(!p[i]){p.GlobalSnowplowNamespace=p.GlobalSnowplowNamespace||[];

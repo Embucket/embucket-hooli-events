@@ -320,6 +320,99 @@ async def test_simulate_session_async_pings_carry_parent_pv_id(monkeypatch):
         assert decode_cx(pp["cx"])["data"][0]["data"]["id"] == pv_id
 
 
+def test_pick_campaign_params_mostly_empty_but_sometimes_populates():
+    """Weights: ~85% empty, the rest carry utm_source (and sometimes gclid/fbclid)."""
+    params = [simulate.pick_campaign_params() for _ in range(500)]
+    # At least one draw gets a utm_source over 500 tries.
+    assert any(p.get("utm_source") for p in params)
+    # Majority are empty — 85% expected, allow slack for variance.
+    empty = sum(1 for p in params if not p)
+    assert empty > 350
+    # At least one click-id variant shows up (gclid + fbclid combine for ~4%).
+    assert any(p.get("gclid") or p.get("fbclid") for p in params)
+
+
+def test_pick_campaign_params_does_not_mutate_table():
+    """Callers may modify the returned dict; the module-level table must not change."""
+    p = simulate.pick_campaign_params()
+    p["injected"] = "x"
+    # None of the entries in CAMPAIGN_PARAMS should have acquired that key.
+    assert not any("injected" in entry for entry, _w in simulate.CAMPAIGN_PARAMS)
+
+
+def test_page_view_with_id_appends_url_query():
+    ev, _ = simulate.page_view_with_id(
+        "duid-1", "sid-1", 1, "home",
+        url_query={"utm_source": "google", "utm_medium": "cpc"},
+    )
+    assert "utm_source=google" in ev["url"]
+    assert "utm_medium=cpc" in ev["url"]
+    assert ev["url"].startswith("https://hooli-events.com/?")
+
+
+def test_page_view_with_id_url_query_uses_amp_when_url_already_has_query():
+    # Detail URL template has ?id=... — additional params should join with &.
+    ev, _ = simulate.page_view_with_id(
+        "duid-1", "sid-1", 1, "detail",
+        event={"id": "7", "name": "X"},
+        url_query={"gclid": "abc"},
+    )
+    assert "?id=7&gclid=abc" in ev["url"]
+
+
+def test_page_view_with_id_empty_url_query_leaves_url_unchanged():
+    ev, _ = simulate.page_view_with_id("duid-1", "sid-1", 1, "home", url_query={})
+    assert ev["url"] == "https://hooli-events.com/"
+
+
+@pytest.mark.asyncio
+async def test_simulate_session_async_landing_page_has_utm_when_campaign_draws(monkeypatch):
+    """When pick_campaign_params returns UTMs, only the first page_view's url carries them."""
+    monkeypatch.setattr(simulate, "BOUNCE_PROBABILITY", 0.0)
+    monkeypatch.setattr(simulate, "INTERACTION_PROBABILITY_PER_PAGE", 0.0)
+    monkeypatch.setattr(simulate, "CONTINUE_PAGE_PROBABILITY", 1.0)
+    monkeypatch.setattr(simulate.random, "expovariate", lambda lam: 0.0)  # no pings
+    monkeypatch.setattr(
+        simulate, "pick_campaign_params",
+        lambda: {"utm_source": "google", "utm_medium": "cpc", "utm_campaign": "brand"},
+    )
+
+    transport, calls = _collect_calls()
+    async with _httpx.AsyncClient(transport=transport) as client:
+        await simulate.simulate_session_async(client, "http://collector")
+
+    events = [json.loads(c)["data"][0] for c in calls]
+    pvs = [e for e in events if e["e"] == "pv"]
+    assert len(pvs) >= 2  # at least landing + one internal nav
+    # Landing page carries UTMs.
+    assert "utm_source=google" in pvs[0]["url"]
+    assert "utm_campaign=brand" in pvs[0]["url"]
+    # Subsequent pages do NOT (internal navigation drops UTMs).
+    for pv in pvs[1:]:
+        assert "utm_" not in pv["url"]
+
+
+@pytest.mark.asyncio
+async def test_simulate_session_async_no_campaign_means_no_utm(monkeypatch):
+    """When pick_campaign_params returns {} (majority case), no URL has UTMs."""
+    monkeypatch.setattr(simulate, "BOUNCE_PROBABILITY", 0.0)
+    monkeypatch.setattr(simulate, "INTERACTION_PROBABILITY_PER_PAGE", 0.0)
+    monkeypatch.setattr(simulate, "CONTINUE_PAGE_PROBABILITY", 1.0)
+    monkeypatch.setattr(simulate.random, "expovariate", lambda lam: 0.0)
+    monkeypatch.setattr(simulate, "pick_campaign_params", lambda: {})
+
+    transport, calls = _collect_calls()
+    async with _httpx.AsyncClient(transport=transport) as client:
+        await simulate.simulate_session_async(client, "http://collector")
+
+    events = [json.loads(c)["data"][0] for c in calls]
+    for e in events:
+        if "url" in e:
+            assert "utm_" not in e["url"]
+            assert "gclid" not in e["url"]
+            assert "fbclid" not in e["url"]
+
+
 @pytest.mark.asyncio
 async def test_simulate_session_async_ping_dtms_are_spaced(monkeypatch):
     """Ping dtm values are 10s-spaced (in the past) relative to the page view's dtm."""
