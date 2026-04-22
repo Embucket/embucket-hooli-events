@@ -69,15 +69,22 @@ Resources:
       LogGroupName: /hooli-events/loader
       RetentionInDays: 7
 
+  # Internal ALB — only clients are the loader ECS tasks inside the VPC.
+  # Switched from internet-facing to eliminate NAT-Bytes hairpin: an
+  # internet-facing ALB's DNS returns public IPs even to VPC-internal
+  # clients, forcing every loader->collector request through the NAT
+  # Gateway at $0.045/GB processed + $0.045/GB processed on return. See
+  # docs/superpowers/handoffs/2026-04-22-internal-alb.md.
+  # Name is intentionally auto-generated so CF can replace cleanly on
+  # scheme changes without name collision.
   Alb:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: hooli-events-alb
-      Scheme: internet-facing
+      Scheme: internal
       Type: application
       Subnets:
-        - !ImportValue hooli-events-PublicSubnet1Id
-        - !ImportValue hooli-events-PublicSubnet2Id
+        - !ImportValue hooli-events-PrivateSubnet1Id
+        - !ImportValue hooli-events-PrivateSubnet2Id
       SecurityGroups:
         - !ImportValue hooli-events-AlbSecurityGroupId
 
