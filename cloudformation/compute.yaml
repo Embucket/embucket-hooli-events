@@ -88,10 +88,16 @@ Resources:
       SecurityGroups:
         - !ImportValue hooli-events-AlbSecurityGroupId
 
+  # Name changed from `hooli-collector-tg` to force CF to replace the target
+  # group alongside the ALB scheme change. A target group can only be
+  # associated with one listener/ALB at a time; without a replacement the
+  # new internal listener would collide with the retiring public listener.
+  # ECS service UpdateService supports swapping the TargetGroupArn in-place
+  # since 2023 (see cloudformation/compute.yaml CollectorService).
   CollectorTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: hooli-collector-tg
+      Name: hooli-collector-tg-int
       Port: 8080
       Protocol: HTTP
       TargetType: ip
