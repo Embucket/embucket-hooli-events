@@ -40,14 +40,49 @@ SYNTHETIC_EVENTS_PER_USER_PER_SEC = float(os.getenv("HOOLI_SYNTHETIC_EVENTS_PER_
 SYNTHETIC_BATCH_SIZE = int(os.getenv("HOOLI_SYNTHETIC_BATCH_SIZE", "1"))
 SYNTHETIC_SESSION_LENGTH = int(os.getenv("HOOLI_SYNTHETIC_SESSION_LENGTH", "100"))
 
-EVENTS = [
-    {"id": "1", "name": "Neon Lights Festival", "price": 49.00},
-    {"id": "2", "name": "Jazz Under the Stars", "price": 35.00},
-    {"id": "3", "name": "Tech Summit 2026", "price": 199.00},
-    {"id": "4", "name": "Street Food Carnival", "price": 15.00},
-    {"id": "5", "name": "Charity Soccer Match", "price": 25.00},
-    {"id": "6", "name": "Modern Art Exhibition", "price": 12.00},
+EVENT_THEMES = [
+    ("Neon Lights Festival", "music", 49.00),
+    ("Jazz Under the Stars", "music", 35.00),
+    ("Tech Summit", "tech", 199.00),
+    ("Street Food Carnival", "food", 15.00),
+    ("Charity Soccer Match", "sports", 25.00),
+    ("Modern Art Exhibition", "arts", 12.00),
+    ("Indie Film Night", "arts", 22.00),
+    ("Startup Pitch Forum", "tech", 89.00),
+    ("Craft Beer Walk", "food", 31.00),
+    ("Marathon Expo", "sports", 18.00),
+    ("Classical Matinee", "music", 42.00),
+    ("Design Leadership Lab", "tech", 129.00),
 ]
+EVENT_CITIES = [
+    "Austin", "Boston", "Chicago", "Denver", "Miami", "Nashville",
+    "New York", "Portland", "San Diego", "Seattle", "Toronto", "Vancouver",
+]
+EVENT_VENUES = [
+    "Civic Hall", "Riverfront Park", "Union Theater", "Warehouse 18",
+    "Grand Pavilion", "Eastside Market", "North Pier", "Foundry Stage",
+]
+
+
+def build_event_catalog():
+    events = []
+    for theme_idx, (theme, category, base_price) in enumerate(EVENT_THEMES):
+        for city_idx, city in enumerate(EVENT_CITIES):
+            venue = EVENT_VENUES[(theme_idx + city_idx) % len(EVENT_VENUES)]
+            event_id = f"{category[:2].upper()}-{theme_idx + 1:02d}-{city_idx + 1:02d}"
+            price = base_price + ((city_idx % 5) * 4) + ((theme_idx % 3) * 2)
+            events.append({
+                "id": event_id,
+                "name": f"{city} {theme}",
+                "category": category,
+                "venue": venue,
+                "city": city,
+                "price": round(price, 2),
+            })
+    return events
+
+
+EVENTS = build_event_catalog()
 
 PAGES = {
     "home": ("https://hooli-events.com/", "Hooli Events - Discover Live Events"),
@@ -57,10 +92,27 @@ PAGES = {
     "checkout": ("https://hooli-events.com/checkout.html", "Order Confirmed - Hooli Events"),
 }
 
-SEARCH_TERMS = ["concert", "jazz", "tech", "food", "festival", "art", "soccer", "music"]
-CATEGORIES = ["music", "tech", "food", "sports"]
+SEARCH_TERMS = [
+    "concert", "jazz", "tech", "food", "festival", "art", "soccer", "music",
+    "startup events", "film night", "beer garden", "marathon", "gallery",
+    "family events", "date night", "live music", "design workshop",
+    "networking", "outdoor festival", "things to do", "weekend tickets",
+]
+CATEGORIES = sorted({event["category"] for event in EVENTS})
 RESOLUTIONS = ["1920x1080", "1440x900", "1366x768", "2560x1440", "390x844"]
 LANGUAGES = ["en-US", "en-GB", "es-ES", "fr-FR", "de-DE"]
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+    "Mozilla/5.0 (Linux; Android 14; SM-S921U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+]
 
 
 def _timestamp_ms():
@@ -68,11 +120,13 @@ def _timestamp_ms():
 
 
 def _base_payload(duid, sid):
+    resolution = random.choice(RESOLUTIONS)
     return {
         "tv": TRACKER_VERSION,
         "tna": TRACKER_NAMESPACE,
         "aid": APP_ID,
         "p": "web",
+        "eid": str(uuid.uuid4()),
         "duid": duid,
         "sid": sid,
         "vid": "1",
@@ -80,7 +134,9 @@ def _base_payload(duid, sid):
         "stm": _timestamp_ms(),
         "tz": "America/New_York",
         "lang": random.choice(LANGUAGES),
-        "res": random.choice(RESOLUTIONS),
+        "res": resolution,
+        "vp": resolution,
+        "ua": random.choice(USER_AGENTS),
         "cs": "UTF-8",
     }
 

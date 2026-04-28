@@ -32,14 +32,49 @@ TRACKER_NAMESPACE = "hooli-sim"
 APP_ID = "hooli-events"
 COLLECTOR_PATH = "/com.snowplowanalytics.snowplow/tp2"
 
-EVENTS = [
-    {"id": "1", "name": "Neon Lights Festival", "price": 49.00},
-    {"id": "2", "name": "Jazz Under the Stars", "price": 35.00},
-    {"id": "3", "name": "Tech Summit 2026", "price": 199.00},
-    {"id": "4", "name": "Street Food Carnival", "price": 15.00},
-    {"id": "5", "name": "Charity Soccer Match", "price": 25.00},
-    {"id": "6", "name": "Modern Art Exhibition", "price": 12.00},
+EVENT_THEMES = [
+    ("Neon Lights Festival", "music", 49.00),
+    ("Jazz Under the Stars", "music", 35.00),
+    ("Tech Summit", "tech", 199.00),
+    ("Street Food Carnival", "food", 15.00),
+    ("Charity Soccer Match", "sports", 25.00),
+    ("Modern Art Exhibition", "arts", 12.00),
+    ("Indie Film Night", "arts", 22.00),
+    ("Startup Pitch Forum", "tech", 89.00),
+    ("Craft Beer Walk", "food", 31.00),
+    ("Marathon Expo", "sports", 18.00),
+    ("Classical Matinee", "music", 42.00),
+    ("Design Leadership Lab", "tech", 129.00),
 ]
+EVENT_CITIES = [
+    "Austin", "Boston", "Chicago", "Denver", "Miami", "Nashville",
+    "New York", "Portland", "San Diego", "Seattle", "Toronto", "Vancouver",
+]
+EVENT_VENUES = [
+    "Civic Hall", "Riverfront Park", "Union Theater", "Warehouse 18",
+    "Grand Pavilion", "Eastside Market", "North Pier", "Foundry Stage",
+]
+
+
+def build_event_catalog():
+    events = []
+    for theme_idx, (theme, category, base_price) in enumerate(EVENT_THEMES):
+        for city_idx, city in enumerate(EVENT_CITIES):
+            venue = EVENT_VENUES[(theme_idx + city_idx) % len(EVENT_VENUES)]
+            event_id = f"{category[:2].upper()}-{theme_idx + 1:02d}-{city_idx + 1:02d}"
+            price = base_price + ((city_idx % 5) * 4) + ((theme_idx % 3) * 2)
+            events.append({
+                "id": event_id,
+                "name": f"{city} {theme}",
+                "category": category,
+                "venue": venue,
+                "city": city,
+                "price": round(price, 2),
+            })
+    return events
+
+
+EVENTS = build_event_catalog()
 
 PAGES = {
     "home": ("https://hooli-events.com/", "Hooli Events - Discover Live Events"),
@@ -49,10 +84,27 @@ PAGES = {
     "checkout": ("https://hooli-events.com/checkout.html", "Order Confirmed - Hooli Events"),
 }
 
-SEARCH_TERMS = ["concert", "jazz", "tech", "food", "festival", "art", "soccer", "music"]
-CATEGORIES = ["music", "tech", "food", "sports"]
+SEARCH_TERMS = [
+    "concert", "jazz", "tech", "food", "festival", "art", "soccer", "music",
+    "startup events", "film night", "beer garden", "marathon", "gallery",
+    "family events", "date night", "live music", "design workshop",
+    "networking", "outdoor festival", "things to do", "weekend tickets",
+]
+CATEGORIES = sorted({event["category"] for event in EVENTS})
 RESOLUTIONS = ["1920x1080", "1440x900", "1366x768", "2560x1440", "390x844"]
 LANGUAGES = ["en-US", "en-GB", "es-ES", "fr-FR", "de-DE"]
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+    "Mozilla/5.0 (Linux; Android 14; SM-S921U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+]
 
 WEB_PAGE_SCHEMA = "iglu:com.snowplowanalytics.snowplow/web_page/jsonschema/1-0-0"
 CONTEXTS_WRAPPER_SCHEMA = "iglu:com.snowplowanalytics.snowplow/contexts/jsonschema/1-0-0"
@@ -194,7 +246,7 @@ def pick_external_referrer():
 # reference sample. Split across realistic sources (google_cpc biggest, fb
 # social, email newsletter, small share of organic socials) plus a couple of
 # raw click-id landers that populate mkt_clickid.
-CAMPAIGN_PARAMS = [
+CAMPAIGN_PARAM_TEMPLATES = [
     ({}, 0.85),  # no campaign — the majority of sessions
     ({"utm_source": "google",     "utm_medium": "cpc",
       "utm_campaign": "summer-events"}, 0.06),
@@ -213,8 +265,18 @@ CAMPAIGN_PARAMS = [
 
 def pick_campaign_params():
     """Return a dict of UTM/click params for this session's entry page (or {})."""
-    params, weights = zip(*CAMPAIGN_PARAMS)
-    return dict(random.choices(params, weights=weights, k=1)[0])
+    params, weights = zip(*CAMPAIGN_PARAM_TEMPLATES)
+    picked = dict(random.choices(params, weights=weights, k=1)[0])
+    if not picked:
+        return picked
+    if picked.get("utm_medium") == "cpc":
+        picked.setdefault("utm_term", random.choice(SEARCH_TERMS).replace(" ", "+"))
+        picked.setdefault("utm_content", f"ad-{random.randint(1000, 9999)}")
+    if "gclid" in picked:
+        picked["gclid"] = "Cj0KCQjw" + uuid.uuid4().hex[:24]
+    if "fbclid" in picked:
+        picked["fbclid"] = "IwAR" + uuid.uuid4().hex[:24]
+    return picked
 
 # Sample of public-internet /8 and /16 blocks spread across geographies. Each
 # session picks a random address from one of these ranges so the MaxMind
@@ -264,6 +326,9 @@ def session_browser_params():
         "vp": vp,
         "ds": f"{vp_w}x{doc_h}",
         "ip": random_public_ip(),
+        "ua": random.choice(USER_AGENTS),
+        "lang": random.choice(LANGUAGES),
+        "res": vp,
     }
 
 
@@ -294,6 +359,7 @@ def base_event(domain_userid, session_id, session_idx, dtm_ms=None, extra=None):
     }
     if extra:
         ev.update(extra)
+    ev["eid"] = str(uuid.uuid4())
     return ev
 
 

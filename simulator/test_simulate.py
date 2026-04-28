@@ -109,6 +109,23 @@ def test_base_event_default_dtm_matches_stm_now():
     assert abs(int(ev["dtm"]) - int(ev["stm"])) < 5
 
 
+def test_base_event_sets_tracker_event_id_entropy():
+    ev = simulate.base_event("u", "s", 1)
+    assert UUID_RE.match(ev["eid"])
+
+
+def test_base_event_event_id_is_unique_per_event():
+    first = simulate.base_event("u", "s", 1)
+    second = simulate.base_event("u", "s", 1)
+    assert first["eid"] != second["eid"]
+
+
+def test_base_event_extra_cannot_override_event_id():
+    ev = simulate.base_event("u", "s", 1, extra={"eid": "not-a-uuid"})
+    assert UUID_RE.match(ev["eid"])
+    assert ev["eid"] != "not-a-uuid"
+
+
 def test_base_event_backdated_dtm_keeps_stm_now():
     past_ms = int(_time.time() * 1000) - 30_000  # 30 s ago
     t0 = int(_time.time() * 1000)
@@ -337,7 +354,36 @@ def test_pick_campaign_params_does_not_mutate_table():
     p = simulate.pick_campaign_params()
     p["injected"] = "x"
     # None of the entries in CAMPAIGN_PARAMS should have acquired that key.
-    assert not any("injected" in entry for entry, _w in simulate.CAMPAIGN_PARAMS)
+    assert not any("injected" in entry for entry, _w in simulate.CAMPAIGN_PARAM_TEMPLATES)
+
+
+def test_campaign_click_ids_are_generated_per_draw(monkeypatch):
+    monkeypatch.setattr(
+        simulate.random,
+        "choices",
+        lambda params, weights, k: [{"utm_source": "google", "utm_medium": "cpc",
+                                     "utm_campaign": "brand", "gclid": "Cj0KCQjw"}],
+    )
+    first = simulate.pick_campaign_params()
+    second = simulate.pick_campaign_params()
+    assert first["gclid"].startswith("Cj0KCQjw")
+    assert second["gclid"].startswith("Cj0KCQjw")
+    assert first["gclid"] != second["gclid"]
+    assert first["utm_term"]
+    assert first["utm_content"].startswith("ad-")
+
+
+def test_event_catalog_has_realistic_cardinality():
+    assert len(simulate.EVENTS) >= 100
+    assert len({event["id"] for event in simulate.EVENTS}) == len(simulate.EVENTS)
+    assert {"music", "tech", "food", "sports", "arts"}.issubset(set(simulate.CATEGORIES))
+
+
+def test_session_browser_params_include_user_agent_and_consistent_resolution():
+    browser = simulate.session_browser_params()
+    assert browser["ua"].startswith("Mozilla/5.0")
+    assert browser["res"] == browser["vp"]
+    assert browser["lang"] in simulate.LANGUAGES
 
 
 def test_page_view_with_id_appends_url_query():
